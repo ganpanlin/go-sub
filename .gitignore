@@ -1,0 +1,35 @@
+# Binaries
+*.exe
+proxy-filter
+main.exe
+
+# Build cache
+.tmp-go-build/
+
+# Runtime data
+data/
+cache/
+docker-data/
+
+# Logs
+*.log
+
+# PID files
+*.pid
+
+# IDE / Editor
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local config (contains tokens/URLs)
+config.json
+
+# Binary output directory
+build/

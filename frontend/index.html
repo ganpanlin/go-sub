@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProxyFilter 管理台</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif; margin: 0; padding: 20px; background: #f5f7fa; }
+        #app { max-width: 1400px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.1); }
+        .title-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .hint { color: #909399; font-size: 12px; line-height: 1.6; }
+        .mono { font-family: Consolas, Monaco, monospace; }
+        .script-box textarea { font-family: Consolas, Monaco, monospace; font-size: 13px; }
+        .sub-url { word-break: break-all; font-family: Consolas, Monaco, monospace; font-size: 12px; }
+        .rule-tag { margin: 2px; }
+        .rule-edit-form .el-form-item { margin-bottom: 10px; }
+        .el-table .cell { display: flex; align-items: center; flex-wrap: nowrap; }
+        .op-cell .el-button { margin-left: 0 !important; margin-right: 4px; }
+        .op-cell .el-button:last-child { margin-right: 0; }
+        .el-transfer { display: flex; justify-content: center; }
+        .el-transfer-panel { width: 45%; }
+        .el-transfer-panel__body { height: 260px; }
+        .el-transfer-panel__list { height: 210px; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <!-- 初始化设置 -->
+    <el-dialog title="初始化管理员" :visible.sync="setupVisible" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false" width="420px">
+        <div style="margin-bottom:16px;color:#606266;font-size:14px;">欢迎使用 ProxyFilter！请创建管理员账户。</div>
+        <el-form label-width="90px" size="small">
+            <el-form-item label="用户名">
+                <el-input v-model="setupForm.username" placeholder="默认 admin"></el-input>
+            </el-form-item>
+            <el-form-item label="密码" required>
+                <el-input v-model="setupForm.password" type="password" placeholder="至少6位" show-password></el-input>
+            </el-form-item>
+            <el-form-item label="确认密码" required>
+                <el-input v-model="setupForm.password2" type="password" placeholder="再次输入" show-password></el-input>
+            </el-form-item>
+        </el-form>
+        <span slot="footer"><el-button type="primary" @click="doSetup">创建并登录</el-button></span>
+    </el-dialog>
+
+    <!-- 登录 -->
+    <el-dialog title="管理员登录" :visible.sync="loginVisible" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false" width="380px">
+        <el-form @keyup.enter.native="login" label-width="70px" size="small">
+            <el-form-item label="用户名"><el-input v-model="loginForm.username" autocomplete="username"></el-input></el-form-item>
+            <el-form-item label="密码"><el-input v-model="loginForm.password" type="password" autocomplete="current-password" show-password></el-input></el-form-item>
+        </el-form>
+        <span slot="footer"><el-button type="primary" @click="login">登录</el-button></span>
+    </el-dialog>
+
+    <!-- 修改密码 -->
+    <el-dialog title="修改密码" :visible.sync="changePwdVisible" width="420px">
+        <el-form label-width="90px" size="small">
+            <el-form-item label="旧密码" required>
+                <el-input v-model="changePwdForm.old_password" type="password" show-password></el-input>
+            </el-form-item>
+            <el-form-item label="新密码" required>
+                <el-input v-model="changePwdForm.new_password" type="password" placeholder="至少6位" show-password></el-input>
+            </el-form-item>
+            <el-form-item label="确认密码" required>
+                <el-input v-model="changePwdForm.new_password2" type="password" placeholder="再次输入" show-password></el-input>
+            </el-form-item>
+        </el-form>
+        <span slot="footer">
+            <el-button @click="changePwdVisible=false">取消</el-button>
+            <el-button type="primary" @click="doChangePassword">确认修改</el-button>
+        </span>
+    </el-dialog>
+
+    <!-- 标题栏 -->
+    <div class="title-bar">
+        <h1 style="margin:0">
+            ProxyFilter
+            <span v-if="versionInfo.version" class="hint" style="font-weight:400;margin-left:8px;">v{{ versionInfo.version }}</span>
+        </h1>
+        <div>
+            <el-button @click="fetchAll" :loading="loading" size="small">刷新</el-button>
+            <el-button type="warning" @click="refreshSourceCache" :loading="refreshingSources" size="small" v-if="activeTab==='sources'">全量刷新缓存</el-button>
+            <el-button size="small" @click="changePwdVisible=true" v-if="authEnabled && !needsSetup">修改密码</el-button>
+            <el-button size="small" @click="doLogout" v-if="authEnabled">退出</el-button>
+            <el-button type="success" size="small" @click="openAddSourceDialog()" v-if="activeTab==='sources'">添加订阅源</el-button>
+            <el-button type="primary" size="small" @click="openProfileDialog()" v-if="activeTab==='profiles'">新建聚合订阅</el-button>
+        </div>
+    </div>
+
+    <el-tabs v-model="activeTab" @tab-click="onTabChange">
+
+        <!-- ====== 订阅源 ====== -->
+        <el-tab-pane label="订阅源" name="sources">
+            <!-- 批量操作栏 -->
+            <div v-if="selectedSources.length" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;padding:10px 16px;background:#ecf5ff;border-radius:4px;">
+                <span style="font-size:13px;">已选 <b>{{ selectedSources.length }}</b> 项</span>
+                <el-button size="mini" type="primary" icon="el-icon-connection" @click="batchTest" :loading="batchTesting">批量测试</el-button>
+                <el-button size="mini" type="warning" icon="el-icon-delete" @click="batchDeleteFailed">删除失败源</el-button>
+                <el-button size="mini" type="danger" icon="el-icon-delete" @click="batchDeleteSelected">删除选中</el-button>
+                <el-button size="mini" @click="selectedSources=[]">取消选择</el-button>
+            </div>
+
+            <el-table ref="sourceTable" :data="sources" style="width:100%" v-loading="loading" size="small" :default-sort="{prop:'last_update',order:'descending'}" :row-class-name="tableRowClassName" @selection-change="onSourceSelect">
+                <el-table-column type="selection" width="40"></el-table-column>
+                <el-table-column prop="name" label="名称" width="130" sortable show-overflow-tooltip>
+                    <template slot-scope="scope">
+                        <span v-if="scope.row.name && scope.row.name !== scope.row.url">{{ scope.row.name }}</span>
+                        <span v-else class="hint">-</span>
+                    </template>
+                </el-table-column>
+                <el-table-column label="类型" width="92" align="center">
+                    <template slot-scope="scope">
+                        <el-tag size="mini" :type="scope.row.type === 'remote_url' ? 'primary' : 'success'">{{ sourceTypeText(scope.row.type) }}</el-tag>
+                    </template>
+                </el-table-column>
+                <el-table-column prop="url" label="位置" sortable min-width="260" show-overflow-tooltip>
+                    <template slot-scope="scope">
+                        <span class="mono" style="font-size:12px;">{{ sourceLocationText(scope.row) }}</span>
+                    </template>
+                </el-table-column>
+                <el-table-column label="启用" width="70" align="center">
+                    <template slot-scope="scope">
+                        <el-switch v-model="scope.row.enabled" size="mini" @change="toggleSourceEnabled(scope.row)"></el-switch>
+                    </template>
+                </el-table-column>
+                <el-table-column label="客户端" width="80" align="center">
+                    <template slot-scope="scope">
+                        <span style="font-size:12px;">{{ scope.row.ua || 'Clash' }}</span>
+                    </template>
+                </el-table-column>
+                <el-table-column label="状态" width="70" align="center" sortable>
+                    <template slot-scope="scope">
+                        <el-tag :type="getStatusTagType(scope.row.status)" size="mini" effect="dark">{{ getStatusText(scope.row.status) }}</el-tag>
+                    </template>
+                </el-table-column>
+                <el-table-column prop="node_count" label="节点" width="72" align="center" sortable>
+                    <template slot-scope="scope">
+                        <span :class="scope.row.node_count > 0 ? '' : 'hint'">{{ scope.row.node_count || 0 }}</span>
+                    </template>
+                </el-table-column>
+                <el-table-column label="延迟" width="80" align="center" sortable>
+                    <template slot-scope="scope">
+                        <span style="font-size:12px;">{{ scope.row.is_cached ? '⚡' : '' }}{{ scope.row.latency > 0 ? scope.row.latency + 'ms' : '-' }}</span>
+                    </template>
+                </el-table-column>
+                <el-table-column label="操作" width="160" align="center" class-name="op-cell">
+                    <template slot-scope="scope">
+                        <el-tooltip content="查看节点"><el-button size="mini" icon="el-icon-view" circle @click="viewSourceData(scope.row)"></el-button></el-tooltip>
+                        <el-tooltip content="编辑"><el-button size="mini" icon="el-icon-edit" circle @click="openSourceDialog(scope.row)"></el-button></el-tooltip>
+                        <el-tooltip content="测试"><el-button size="mini" icon="el-icon-connection" circle @click="testSource(scope.row)" :loading="testingStatus[sourceKey(scope.row)]"></el-button></el-tooltip>
+                        <el-tooltip content="删除"><el-button size="mini" type="danger" icon="el-icon-delete" circle @click="deleteSource(scope.row)"></el-button></el-tooltip>
+                    </template>
+                </el-table-column>
+            </el-table>
+        </el-tab-pane>
+
+        <!-- ====== 聚合订阅 ====== -->
+        <el-tab-pane label="聚合订阅" name="profiles">
+            <el-table :data="profiles" style="width:100%" v-loading="loading" size="small">
+                <el-table-column prop="name" label="名称" width="130" show-overflow-tooltip></el-table-column>
+                <el-table-column label="分流" width="90">
+                    <template slot-scope="scope">
+                        <span style="font-size:12px;">{{ scope.row.routing_id ? getRoutingName(scope.row.routing_id) : '默认' }}</span>
+                    </template>
+                </el-table-column>
+                <el-table-column label="规则" min-width="200">
+                    <template slot-scope="scope">
+                        <div class="hint" style="line-height:1.4;">
+                            In: {{ scope.row.include || '-' }} / Ex: {{ scope.row.exclude || '-' }}
+                            <span v-if="scope.row.type_filter"> / T: {{ scope.row.type_filter }}</span>
+                            <span v-if="scope.row.source_prefix && scope.row.source_prefix !== 'off'"> / 前缀:{{ scope.row.source_prefix }}</span>
+                        </div>
+                    </template>
+                </el-table-column>
+                <el-table-column label="订阅链接" min-width="180">
+                    <template slot-scope="scope"><div class="sub-url">{{ subUrl(scope.row.token) }}</div></template>
+                </el-table-column>
+                <el-table-column label="操作" width="200" align="center" class-name="op-cell">
+                    <template slot-scope="scope">
+                        <el-tooltip content="模拟预览"><el-button size="mini" icon="el-icon-monitor" circle @click="simulateProfile(scope.row)"></el-button></el-tooltip>
+                        <el-tooltip content="编辑"><el-button size="mini" type="primary" icon="el-icon-edit" circle @click="openProfileDialog(scope.row)"></el-button></el-tooltip>
+                        <el-tooltip content="打开"><el-button size="mini" icon="el-icon-link" circle @click="openSub(scope.row.token)"></el-button></el-tooltip>
+                        <el-tooltip content="复制链接"><el-button size="mini" icon="el-icon-document-copy" circle @click="copySub(scope.row.token)"></el-button></el-tooltip>
+                        <el-tooltip content="重置Token"><el-button size="mini" icon="el-icon-refresh-right" circle @click="resetToken(scope.row)"></el-button></el-tooltip>
+                        <el-tooltip content="删除"><el-button size="mini" type="danger" icon="el-icon-delete" circle @click="deleteProfile(scope.row.id)"></el-button></el-tooltip>
+                    </template>
+                </el-table-column>
+            </el-table>
+        </el-tab-pane>
+
+        <!-- ====== 分流规则 ====== -->
+        <el-tab-pane label="分流规则" name="routing">
+            <div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
+                <span class="hint">定义 proxy-groups / rule-providers / rules 的生成方式。</span>
+                <el-button type="primary" size="small" @click="openRoutingDialog()">新建分流规则</el-button>
+            </div>
+            <el-collapse v-model="expandedRouting">
+                <el-collapse-item v-for="rp in routingProfiles" :key="rp.id" :name="rp.id">
+                    <template slot="title">
+                        <span style="font-weight:500;">{{ rp.name }}</span>
+                        <el-tag v-if="rp.id === 'default'" size="mini" type="info" style="margin-left:8px;">系统默认</el-tag>
+                        <el-tag size="mini" style="margin-left:8px;">{{ rp.rules.length }} 条</el-tag>
+                        <span style="margin-left:auto;margin-right:10px;">
+                            <el-button size="mini" type="primary" @click.stop="openRoutingDialog(rp)">编辑</el-button>
+                            <el-button v-if="rp.id !== 'default'" size="mini" type="danger" @click.stop="deleteRouting(rp.id)">删除</el-button>
+                        </span>
+                    </template>
+                    <el-table :data="rp.rules" size="mini" border>
+                        <el-table-column prop="name" label="策略组" width="150"></el-table-column>
+                        <el-table-column label="GFW" width="60" align="center">
+                            <template slot-scope="scope"><el-tag :type="scope.row.gfw ? 'danger' : 'success'" size="mini">{{ scope.row.gfw ? '墙' : '直' }}</el-tag></template>
+                        </el-table-column>
+                        <el-table-column label="远程规则集" min-width="280">
+                            <template slot-scope="scope">
+                                <div v-for="u in (scope.row.urls || [])" :key="u" class="mono" style="font-size:11px;word-break:break-all;">{{ u }}</div>
+                                <span v-if="!scope.row.urls || !scope.row.urls.length" class="hint">-</span>
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="内联规则" min-width="180">
+                            <template slot-scope="scope">
+                                <el-tag v-for="p in (scope.row.payload || []).slice(0,3)" :key="p" size="mini" class="rule-tag">{{ p }}</el-tag>
+                                <el-tag v-if="(scope.row.payload || []).length > 3" size="mini" type="info">+{{ scope.row.payload.length - 3 }}</el-tag>
+                                <span v-if="!scope.row.payload || !scope.row.payload.length" class="hint">-</span>
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="额外" width="80">
+                            <template slot-scope="scope">
+                                <el-tag v-for="e in (scope.row.extraProxies || [])" :key="e" size="mini" type="warning">{{ e }}</el-tag>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                </el-collapse-item>
+            </el-collapse>
+        </el-tab-pane>
+    </el-tabs>
+
+    <!-- ====== 添加订阅源对话框 ====== -->
+    <el-dialog title="添加订阅源" :visible.sync="addSourceVisible" width="560px">
+        <el-form label-width="90px" size="small">
+            <el-form-item label="名称" required>
+                <el-input v-model="addSourceForm.name" placeholder="如：69云、我的VPS"></el-input>
+            </el-form-item>
+            <el-form-item label="类型">
+                <el-radio-group v-model="addSourceForm.type" size="small">
+                    <el-radio-button label="remote_url">远程URL</el-radio-button>
+                    <el-radio-button label="local_uri">本地URI</el-radio-button>
+                    <el-radio-button label="local_yaml">本地YAML</el-radio-button>
+                </el-radio-group>
+            </el-form-item>
+            <el-form-item label="URL" v-if="addSourceForm.type === 'remote_url'">
+                <el-input v-model="addSourceForm.url" placeholder="https://..."></el-input>
+            </el-form-item>
+            <el-form-item label="本地内容" v-else>
+                <el-input type="textarea" :rows="4" v-model="addSourceForm.content" placeholder="粘贴 ss://、vmess://、trojan:// 等 URI 或 Clash YAML"></el-input>
+            </el-form-item>
+            <el-form-item label="启用">
+                <el-switch v-model="addSourceForm.enabled"></el-switch>
+            </el-form-item>
+            <el-form-item label="客户端模式">
+                <el-select v-model="addSourceForm.ua" style="width:100%">
+                    <el-option label="Clash（推荐）" value="clash"></el-option>
+                    <el-option label="Mihomo" value="mihomo"></el-option>
+                    <el-option label="Surge" value="surge"></el-option>
+                    <el-option label="Shadowrocket" value="shadowrocket"></el-option>
+                    <el-option label="Quantumult" value="quantumult"></el-option>
+                    <el-option label="Loon" value="loon"></el-option>
+                    <el-option label="浏览器" value="browser"></el-option>
+                </el-select>
+                <div class="hint">部分机场只对特定客户端返回数据，Clash 兼容性最好。</div>
+            </el-form-item>
+        </el-form>
+        <span slot="footer">
+            <el-button @click="addSourceVisible=false">取消</el-button>
+            <el-button type="primary" @click="doAddSource">添加</el-button>
+        </span>
+    </el-dialog>
+
+    <!-- ====== 编辑订阅源对话框 ====== -->
+    <el-dialog title="编辑订阅源" :visible.sync="sourceDialogVisible" width="560px">
+        <el-form label-width="90px" size="small">
+            <el-form-item label="名称" required>
+                <el-input v-model="sourceDialogForm.name" placeholder="如：69云、我的VPS"></el-input>
+            </el-form-item>
+            <el-form-item label="类型">
+                <el-input :value="sourceTypeText(sourceDialogForm.type)" disabled></el-input>
+            </el-form-item>
+            <el-form-item label="位置">
+                <el-input :value="sourceLocationText(sourceDialogForm)" disabled></el-input>
+            </el-form-item>
+            <el-form-item label="启用">
+                <el-switch v-model="sourceDialogForm.enabled"></el-switch>
+            </el-form-item>
+            <el-form-item label="客户端模式">
+                <el-select v-model="sourceDialogForm.ua" style="width:100%">
+                    <el-option label="Clash（推荐）" value="clash"></el-option>
+                    <el-option label="Mihomo" value="mihomo"></el-option>
+                    <el-option label="Surge" value="surge"></el-option>
+                    <el-option label="Shadowrocket" value="shadowrocket"></el-option>
+                    <el-option label="Quantumult" value="quantumult"></el-option>
+                    <el-option label="Loon" value="loon"></el-option>
+                    <el-option label="浏览器" value="browser"></el-option>
+                </el-select>
+                <div class="hint">修改后需点「测试」才能生效。</div>
+            </el-form-item>
+        </el-form>
+        <span slot="footer">
+            <el-button @click="sourceDialogVisible=false">取消</el-button>
+            <el-button type="primary" @click="saveSourceDialog">保存</el-button>
+        </span>
+    </el-dialog>
+
+    <!-- ====== 查看源数据对话框 ====== -->
+    <el-dialog :title="'节点数据 - ' + (sourceData.name || '')" :visible.sync="sourceDataVisible" width="960px" top="5vh">
+        <div v-if="sourceDataLoading" style="text-align:center;padding:40px;"><i class="el-icon-loading"></i> 加载中...</div>
+        <div v-else-if="sourceData.error"><el-alert type="error" :closable="false">{{ sourceData.error }}</el-alert></div>
+        <div v-else>
+            <el-descriptions :column="4" border size="small" style="margin-bottom:12px;">
+                <el-descriptions-item label="状态">{{ sourceData.status }}</el-descriptions-item>
+                <el-descriptions-item label="延迟">{{ sourceData.latency }}ms</el-descriptions-item>
+                <el-descriptions-item label="节点数">{{ sourceData.total }}</el-descriptions-item>
+                <el-descriptions-item label="策略组">{{ sourceData.proxy_groups }}</el-descriptions-item>
+            </el-descriptions>
+            <el-table :data="sourceData.proxies" style="width:100%" max-height="500" size="mini" border>
+                <el-table-column type="index" width="45" label="#"></el-table-column>
+                <el-table-column prop="name" label="节点名" min-width="200" show-overflow-tooltip></el-table-column>
+                <el-table-column prop="type" label="类型" width="70">
+                    <template slot-scope="scope"><el-tag size="mini">{{ scope.row.type }}</el-tag></template>
+                </el-table-column>
+                <el-table-column prop="server" label="服务器" width="160" class-name="mono" show-overflow-tooltip></el-table-column>
+                <el-table-column prop="port" label="端口" width="70"></el-table-column>
+                <el-table-column label="加密" width="120" show-overflow-tooltip>
+                    <template slot-scope="scope">{{ scope.row.cipher || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="TLS" width="50" align="center">
+                    <template slot-scope="scope">{{ scope.row.tls ? '✅' : '-' }}</template>
+                </el-table-column>
+                <el-table-column label="UDP" width="50" align="center">
+                    <template slot-scope="scope">{{ scope.row.udp ? '✅' : '-' }}</template>
+                </el-table-column>
+            </el-table>
+        </div>
+    </el-dialog>
+
+    <!-- ====== 聚合订阅编辑对话框 ====== -->
+    <el-dialog :title="profileForm.id ? '编辑聚合订阅' : '新建聚合订阅'" :visible.sync="profileDialogVisible" width="920px" top="5vh">
+        <el-form label-width="110px" size="small">
+            <el-form-item label="启用"><el-switch v-model="profileForm.enabled"></el-switch></el-form-item>
+            <el-form-item label="名称" required><el-input v-model="profileForm.name" placeholder="例如：HK + JP 优选"></el-input></el-form-item>
+            <el-form-item label="分流规则">
+                <el-select v-model="profileForm.routing_id" clearable style="width:100%" placeholder="不选则使用默认分流规则">
+                    <el-option v-for="rp in routingProfiles" :key="rp.id" :label="rp.name" :value="rp.id"></el-option>
+                </el-select>
+            </el-form-item>
+            <el-form-item label="订阅源">
+                <el-transfer
+                    v-model="profileForm.sources"
+                    :data="sourceTransferData"
+                    :titles="['可选源', '已选源']"
+                    :props="{key:'id',label:'label'}"
+                    filterable
+                    :filter-method="transferFilter"
+                    filter-placeholder="搜索源名称或URL"
+                    style="width:100%">
+                    <template slot-scope="{option}">
+                        <span :title="option.url">{{ option.label }}</span>
+                    </template>
+                </el-transfer>
+                <div class="hint">留空 = 聚合所有已配置订阅源。</div>
+            </el-form-item>
+            <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="包含正则"><el-input v-model="profileForm.include" placeholder="如：(?i)香港|HK|🇭🇰"></el-input></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="去除正则"><el-input v-model="profileForm.exclude" placeholder="如：公告|套餐|到期"></el-input></el-form-item></el-col>
+            </el-row>
+            <el-row :gutter="12">
+                <el-col :span="8"><el-form-item label="类型过滤"><el-input v-model="profileForm.type_filter" placeholder="vless|vmess|ss"></el-input></el-form-item></el-col>
+                <el-col :span="8">
+                    <el-form-item label="Server">
+                        <el-select v-model="profileForm.server_filter" clearable style="width:100%">
+                            <el-option label="不限" value=""></el-option>
+                            <el-option label="只要 IP" value="ip"></el-option>
+                            <el-option label="只要域名" value="domain"></el-option>
+                        </el-select>
+                    </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                    <el-form-item label="排序">
+                        <el-select v-model="profileForm.sort_by" clearable style="width:100%">
+                            <el-option label="不排序" value=""></el-option>
+                            <el-option label="按区域" value="region"></el-option>
+                            <el-option label="按名称" value="name"></el-option>
+                            <el-option label="按类型" value="type"></el-option>
+                        </el-select>
+                    </el-form-item>
+                </el-col>
+            </el-row>
+            <el-row :gutter="12">
+                <el-col :span="12">
+                    <el-form-item label="节点名前缀">
+                        <el-select v-model="profileForm.source_prefix" style="width:100%">
+                            <el-option label="不加前缀" value="off"></el-option>
+                            <el-option label="用订阅源名称" value="name"></el-option>
+                            <el-option label="用域名" value="domain"></el-option>
+                        </el-select>
+                    </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                    <el-form-item label="重命名模板">
+                        <el-input v-model="profileForm.rename_pattern" placeholder="{code}_{tag}"></el-input>
+                    </el-form-item>
+                </el-col>
+            </el-row>
+            <el-form-item label="字段覆写">
+                <el-input type="textarea" :rows="2" v-model="profileForm.overridesText" placeholder='{"tls":true,"sni":"example.com"}'></el-input>
+            </el-form-item>
+            <el-form-item label="JS脚本">
+                <el-input class="script-box" type="textarea" :rows="8" v-model="profileForm.script" placeholder='function transform(node) { return node; }'></el-input>
+                <div class="hint">transform(node)：返回 false 排除；返回 true 保留；返回对象覆写字段。</div>
+            </el-form-item>
+        </el-form>
+        <span slot="footer">
+            <el-button @click="profileDialogVisible=false">取消</el-button>
+            <el-button type="warning" @click="simulateProfile" :loading="simulating" v-if="profileForm.id">模拟</el-button>
+            <el-button type="primary" @click="saveProfile">保存</el-button>
+        </span>
+    </el-dialog>
+
+    <!-- ====== 模拟预览对话框 ====== -->
+    <el-dialog title="模拟预览" :visible.sync="simDialogVisible" width="960px" top="3vh">
+        <div v-if="simLoading" style="text-align:center;padding:40px;"><i class="el-icon-loading"></i> 正在生成配置...</div>
+        <div v-else-if="simResult">
+            <el-alert v-if="simResult.errors && simResult.errors.length" type="error" :closable="false" style="margin-bottom:12px;">
+                <div v-for="e in simResult.errors" :key="e">❌ {{ e }}</div>
+            </el-alert>
+            <el-alert v-if="simResult.warnings && simResult.warnings.length" type="warning" :closable="false" style="margin-bottom:12px;">
+                <div v-for="w in simResult.warnings" :key="w">⚠️ {{ w }}</div>
+            </el-alert>
+            <el-alert v-if="simResult.ok" type="success" :closable="false" style="margin-bottom:12px;">✅ 配置验证通过</el-alert>
+            <el-descriptions :column="3" border size="small" style="margin-bottom:12px;">
+                <el-descriptions-item label="节点">{{ simResult.summary.total_nodes }} → {{ simResult.summary.filtered_nodes }}</el-descriptions-item>
+                <el-descriptions-item label="策略组">{{ simResult.summary.proxy_groups }}</el-descriptions-item>
+                <el-descriptions-item label="规则">{{ simResult.summary.rules }} ({{ simResult.summary.rule_providers }} 远程)</el-descriptions-item>
+            </el-descriptions>
+            <div v-if="simResult.sources && simResult.sources.length" style="margin-bottom:8px;">
+                <strong>源：</strong>
+                <el-tag v-for="s in simResult.sources" :key="s.url" size="mini" :type="s.error ? 'danger' : 'success'" style="margin:2px;">{{ s.name || s.url }} ({{ s.node_count }}){{ s.error ? ' ✗' : '' }}</el-tag>
+            </div>
+            <el-collapse v-model="simExpanded">
+                <el-collapse-item title="YAML 预览" name="yaml">
+                    <pre class="mono" style="max-height:500px;overflow:auto;background:#fafafa;padding:12px;border-radius:4px;font-size:12px;line-height:1.4;">{{ simResult.yaml_preview }}</pre>
+                </el-collapse-item>
+            </el-collapse>
+        </div>
+    </el-dialog>
+
+    <!-- ====== 分流规则编辑对话框 ====== -->
+    <el-dialog :title="routingForm.id ? '编辑分流规则' : '新建分流规则'" :visible.sync="routingDialogVisible" width="1100px" top="3vh">
+        <el-form label-width="70px" size="small" class="rule-edit-form">
+            <el-form-item label="名称" required><el-input v-model="routingForm.name" placeholder="例如：默认分流规则"></el-input></el-form-item>
+        </el-form>
+
+        <!-- ========== 1. 已选规则（可拖拽、可编辑策略组名/GFW） ========== -->
+        <div style="margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span style="font-weight:600;font-size:14px;">📋 已选规则 <el-tag size="mini" style="margin-left:4px;">{{ (routingForm.rules||[]).length }}</el-tag></span>
+                <div style="display:flex;gap:6px;">
+                    <el-button size="mini" @click="addRuleItem">+ 自定义规则</el-button>
+                    <el-button size="mini" type="danger" @click="routingForm.rules=[]" v-if="routingForm.rules.length">清空全部</el-button>
+                </div>
+            </div>
+            <el-table :data="routingForm.rules" size="mini" border max-height="280" style="width:100%">
+                <el-table-column type="index" width="40" label="#"></el-table-column>
+                <el-table-column label="策略组名" width="160">
+                    <template slot-scope="scope">
+                        <el-input v-model="scope.row.name" size="mini" placeholder="策略组名"></el-input>
+                    </template>
+                </el-table-column>
+                <el-table-column label="代理" width="60" align="center">
+                    <template slot-scope="scope">
+                        <el-switch v-model="scope.row.gfw" size="mini" active-color="#409eff" inactive-color="#67c23a"></el-switch>
+                    </template>
+                </el-table-column>
+                <el-table-column label="来源" min-width="300">
+                    <template slot-scope="scope">
+                        <div v-if="scope.row.urls && scope.row.urls.length">
+                            <el-tag v-for="(u,i) in scope.row.urls" :key="i" size="mini" type="info" style="margin:1px;">{{ urlDisplayName(u) }}</el-tag>
+                        </div>
+                        <div v-if="scope.row.payload && scope.row.payload.length">
+                            <el-tag v-for="(p,i) in scope.row.payload" :key="'p'+i" size="mini" type="warning" style="margin:1px;">{{ p }}</el-tag>
+                        </div>
+                        <span v-if="scope.row.extraProxies && scope.row.extraProxies.length" style="margin-left:4px;">
+                            <el-tag v-for="e in scope.row.extraProxies" :key="e" size="mini" type="danger">{{ e }}</el-tag>
+                        </span>
+                    </template>
+                </el-table-column>
+                <el-table-column label="操作" width="110" align="center">
+                    <template slot-scope="scope">
+                        <el-tooltip content="展开编辑URL/内联规则"><el-button size="mini" icon="el-icon-edit" circle @click="openRuleDetail(scope.$index, scope.row)"></el-button></el-tooltip>
+                        <el-tooltip content="上移" v-if="scope.$index > 0"><el-button size="mini" icon="el-icon-top" circle @click="moveRule(scope.$index, -1)"></el-button></el-tooltip>
+                        <el-tooltip content="删除"><el-button size="mini" type="danger" icon="el-icon-delete" circle @click="routingForm.rules.splice(scope.$index,1)"></el-button></el-tooltip>
+                    </template>
+                </el-table-column>
+            </el-table>
+        </div>
+
+        <!-- ========== 2. 规则库选择 ========== -->
+        <div style="margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <span style="font-weight:600;font-size:14px;">📦 选择规则</span>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <el-input size="mini" style="width:160px;" v-model="catalogFilter" placeholder="搜索规则..." clearable prefix-icon="el-icon-search"></el-input>
+                    <el-button size="mini" type="success" @click="addCatalogRules" :disabled="!hasCheckedCatalog">加入已选 ({{ checkedCatalogCount }})</el-button>
+                </div>
+            </div>
+            <div style="max-height:320px;overflow-y:auto;border:1px solid #ebeef5;border-radius:4px;padding:8px;background:#fafafa;">
+                <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                    <div v-for="cat in filteredCatalog" :key="cat.id" style="width:calc(50% - 3px);margin-bottom:4px;border:1px solid #e4e7ed;border-radius:4px;background:#fff;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 10px;border-bottom:1px solid #f2f2f2;">
+                            <label style="font-weight:500;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:5px;">
+                                <el-checkbox :value="isCatAllChecked(cat)" :indeterminate="isCatPartial(cat)" @change="v => toggleCatAll(cat, v)"></el-checkbox>
+                                {{ cat.name }}
+                            </label>
+                            <el-tag size="mini" :type="catCheckedCount(cat) > 0 ? 'success' : 'info'">{{ catCheckedCount(cat) }}/{{ cat.rules.length }}</el-tag>
+                        </div>
+                        <div style="padding:6px 10px;display:flex;flex-wrap:wrap;gap:4px 10px;">
+                            <el-checkbox v-for="rule in cat.rules" :key="rule.id" 
+                                :value="isCatalogChecked(cat.id, rule.id)"
+                                :disabled="isRuleAlreadyAdded(rule)"
+                                @change="v => toggleCatalog(cat.id, rule.id, v, rule)">
+                                {{ rule.name }}
+                                <span v-if="isRuleAlreadyAdded(rule)" style="color:#c0c4cc;font-size:11px;">✓</span>
+                            </el-checkbox>
+                        </div>
+                    </div>
+                </div>
+                <div v-if="!filteredCatalog.length" style="text-align:center;padding:20px;color:#909399;">暂无匹配规则</div>
+            </div>
+        </div>
+
+        <!-- ========== 3. 单条规则编辑弹层 ========== -->
+        <el-dialog title="编辑规则详情" :visible.sync="ruleDetailVisible" width="700px" append-to-body>
+            <div v-if="ruleDetailData">
+                <el-form label-width="100px" size="small">
+                    <el-form-item label="策略组名"><el-input v-model="ruleDetailData.name"></el-input></el-form-item>
+                    <el-form-item label="走代理"><el-switch v-model="ruleDetailData.gfw"></el-switch></el-form-item>
+                    <el-form-item label="远程规则URL">
+                        <div v-for="(u,i) in ruleDetailData.urls" :key="'u'+i" style="display:flex;gap:4px;margin-bottom:4px;">
+                            <el-input v-model="ruleDetailData.urls[i]" class="mono" placeholder="https://..."></el-input>
+                            <el-button size="mini" type="danger" icon="el-icon-delete" circle @click="ruleDetailData.urls.splice(i,1)"></el-button>
+                        </div>
+                        <el-button size="mini" @click="$set(ruleDetailData,'urls',ruleDetailData.urls.concat(['']))">+ URL</el-button>
+                    </el-form-item>
+                    <el-form-item label="内联规则">
+                        <div v-for="(p,i) in ruleDetailData.payload" :key="'p'+i" style="display:flex;gap:4px;margin-bottom:4px;">
+                            <el-input v-model="ruleDetailData.payload[i]" class="mono" placeholder="DOMAIN-SUFFIX,example.com"></el-input>
+                            <el-button size="mini" type="danger" icon="el-icon-delete" circle @click="ruleDetailData.payload.splice(i,1)"></el-button>
+                        </div>
+                        <el-button size="mini" @click="$set(ruleDetailData,'payload',ruleDetailData.payload.concat(['']))">+ 规则</el-button>
+                        <div class="hint">只写匹配条件，如 DOMAIN-SUFFIX,google.com 或 IP-CIDR,10.0.0.0/8</div>
+                    </el-form-item>
+                    <el-form-item label="额外代理名">
+                        <div v-for="(e,i) in ruleDetailData.extraProxies" :key="'e'+i" style="display:flex;gap:4px;margin-bottom:4px;">
+                            <el-input v-model="ruleDetailData.extraProxies[i]" placeholder="REJECT"></el-input>
+                            <el-button size="mini" type="danger" icon="el-icon-delete" circle @click="ruleDetailData.extraProxies.splice(i,1)"></el-button>
+                        </div>
+                        <el-button size="mini" @click="$set(ruleDetailData,'extraProxies',ruleDetailData.extraProxies.concat(['']))">+ 代理</el-button>
+                    </el-form-item>
+                </el-form>
+            </div>
+            <span slot="footer">
+                <el-button @click="ruleDetailVisible=false">关闭</el-button>
+            </span>
+        </el-dialog>
+
+        <span slot="footer">
+            <el-button @click="routingDialogVisible=false">取消</el-button>
+            <el-button type="primary" @click="saveRouting">保存</el-button>
+        </span>
+    </el-dialog>
+</div>
+
+<script src="https://unpkg.com/vue@2.6.14/dist/vue.min.js"></script>
+<script src="https://unpkg.com/element-ui/lib/index.js"></script>
+<script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+<script>
+// JWT token management
+(function() {
+    const token = localStorage.getItem('pf_token');
+    if (token) {
+        axios.defaults.headers.common['Authorization'] = 'Bearer ' + token;
+    }
+})();
+
+axios.interceptors.response.use(resp => {
+    const body = resp.data;
+    if (body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'code') && Object.prototype.hasOwnProperty.call(body, 'data')) {
+        if (body.code === 0) {
+            resp.data = body.data;
+            return resp;
+        }
+        const err = new Error(body.msg || '请求失败');
+        err.response = resp;
+        err.api = body;
+        return Promise.reject(err);
+    }
+    return resp;
+}, err => Promise.reject(err));
+
+function apiErrorMessage(err, fallback) {
+    if (err && err.api && err.api.msg) return err.api.msg;
+    if (err && err.response && err.response.data && err.response.data.msg) return err.response.data.msg;
+    if (err && err.response && err.response.data && err.response.data.error) return err.response.data.error;
+    return fallback || (err && err.message) || '请求失败';
+}
+
+new Vue({
+    el: '#app',
+    data: {
+        activeTab: 'sources',
+        loading: false,
+        sources: [],
+        profiles: [],
+        routingProfiles: [],
+        expandedRouting: [],
+        testingStatus: {},
+        selectedSources: [],
+        batchTesting: false,
+        refreshingSources: false,
+        versionInfo: {},
+        authEnabled: false,
+        needsSetup: false,
+        loginVisible: false,
+        loginForm: { username: 'admin', password: '' },
+        setupVisible: false,
+        setupForm: { username: 'admin', password: '', password2: '' },
+        changePwdVisible: false,
+        changePwdForm: { old_password: '', new_password: '', new_password2: '' },
+        // Add source dialog
+        addSourceVisible: false,
+        addSourceForm: { name: '', type: 'remote_url', url: '', content: '', ua: 'clash', enabled: true },
+        // Edit source dialog
+        sourceDialogVisible: false,
+        sourceDialogForm: { id: '', name: '', type: 'remote_url', url: '', ua: 'clash', enabled: true },
+        // Source data viewer
+        sourceDataVisible: false,
+        sourceDataLoading: false,
+        sourceData: {},
+        // Profile dialog
+        profileDialogVisible: false,
+        profileForm: {},
+        // Routing dialog
+        routingDialogVisible: false,
+        routingForm: { name: '', rules: [] },
+        // Rule catalog
+        ruleCatalog: [],
+        catalogChecked: {}, // { catId: { ruleId: true } }
+        catalogFilter: '',
+        // Rule detail editor
+        ruleDetailVisible: false,
+        ruleDetailData: null,
+        // Simulation
+        simulating: false,
+        simDialogVisible: false,
+        simResult: null,
+        simLoading: false,
+        simExpanded: []
+    },
+    methods: {
+        onTabChange() {},
+        fetchAll() { this.fetchSources(); this.fetchProfiles(); this.fetchRouting(); },
+        fetchVersion() {
+            axios.get('/api/version').then(r => { this.versionInfo = r.data || {}; }).catch(() => {});
+        },
+        setToken(token) {
+            if (token) {
+                localStorage.setItem('pf_token', token);
+                axios.defaults.headers.common['Authorization'] = 'Bearer ' + token;
+            }
+        },
+        clearToken() {
+            localStorage.removeItem('pf_token');
+            delete axios.defaults.headers.common['Authorization'];
+        },
+        checkAuth() {
+            axios.get('/api/auth/status').then(r => {
+                const d = r.data || {};
+                this.authEnabled = !!d.enabled;
+                this.needsSetup = !!d.needs_setup;
+                if (this.needsSetup) {
+                    this.setupVisible = true;
+                    this.loginVisible = false;
+                } else if (this.authEnabled && !d.authenticated) {
+                    this.loginVisible = true;
+                    this.setupVisible = false;
+                } else {
+                    this.loginVisible = false;
+                    this.setupVisible = false;
+                    this.fetchAll();
+                }
+            }).catch(() => { this.loginVisible = true; });
+        },
+        login() {
+            axios.post('/api/auth/login', this.loginForm).then(r => {
+                const d = r.data || {};
+                if (d.needs_setup) {
+                    this.loginVisible = false;
+                    this.setupVisible = true;
+                    return;
+                }
+                this.setToken(d.token);
+                this.$message.success('登录成功'); this.loginVisible = false; this.fetchAll();
+            }).catch(e => {
+                this.$message.error(apiErrorMessage(e, '登录失败'));
+            });
+        },
+        doLogout() {
+            axios.post('/api/auth/logout').then(() => {
+                this.clearToken();
+                this.$message.success('已退出');
+                this.loginForm.password = '';
+                this.loginVisible = true;
+            });
+        },
+        doSetup() {
+            if (!this.setupForm.password || this.setupForm.password.length < 6) return this.$message.error('密码至少6位');
+            if (this.setupForm.password !== this.setupForm.password2) return this.$message.error('两次密码不一致');
+            axios.post('/api/auth/setup', {
+                username: this.setupForm.username || 'admin',
+                password: this.setupForm.password
+            }).then(r => {
+                const d = r.data || {};
+                this.setToken(d.token);
+                this.$message.success('管理员账户已创建'); this.setupVisible = false; this.needsSetup = false; this.authEnabled = true; this.fetchAll();
+            }).catch(e => {
+                this.$message.error(apiErrorMessage(e, '创建失败'));
+            });
+        },
+        doChangePassword() {
+            if (!this.changePwdForm.new_password || this.changePwdForm.new_password.length < 6) return this.$message.error('新密码至少6位');
+            if (this.changePwdForm.new_password !== this.changePwdForm.new_password2) return this.$message.error('两次密码不一致');
+            axios.post('/api/auth/change-password', {
+                old_password: this.changePwdForm.old_password,
+                new_password: this.changePwdForm.new_password
+            }).then(() => {
+                this.$message.success('密码已修改'); this.changePwdVisible = false; this.changePwdForm = { old_password: '', new_password: '', new_password2: '' };
+            }).catch(e => {
+                this.$message.error(apiErrorMessage(e, '修改失败'));
+            });
+        },
+
+        // === Sources ===
+        fetchSources() {
+            // Debounce: cancel pending request if called again within 500ms
+            if (this._fetchSourcesTimer) clearTimeout(this._fetchSourcesTimer);
+            this._fetchSourcesTimer = setTimeout(() => {
+                if (this._fetchSourcesCancel) this._fetchSourcesCancel.cancel();
+                const CancelToken = axios.CancelToken;
+                const source = CancelToken.source();
+                this._fetchSourcesCancel = source;
+                this.loading = true;
+                axios.get('/api/sources', { cancelToken: source.token }).then(r => {
+                    this.sources = r.data || [];
+                }).catch(e => {
+                    if (!axios.isCancel(e)) console.error('fetchSources failed:', e);
+                }).finally(() => {
+                    this.loading = false;
+                    this._fetchSourcesCancel = null;
+                });
+            }, 500);
+        },
+        refreshSourceCache() {
+            this.$confirm('将强制重新获取所有已启用订阅源，并覆盖源缓存。继续？', '全量刷新缓存', { type: 'warning' }).then(() => {
+                this.refreshingSources = true;
+                axios.post('/api/sources/refresh').then(resp => {
+                    const r = resp.data || {};
+                    this.$message.success(`刷新完成：成功 ${r.success || 0}/${r.total || 0}，失败 ${r.failed || 0}，跳过 ${r.skipped || 0}`);
+                    this.fetchSources();
+                }).catch(e => {
+                    this.$message.error('全量刷新失败: ' + apiErrorMessage(e));
+                }).finally(() => {
+                    this.refreshingSources = false;
+                });
+            }).catch(() => {});
+        },
+        openAddSourceDialog() {
+            this.addSourceForm = { name: '', type: 'remote_url', url: '', content: '', ua: 'clash', enabled: true };
+            this.addSourceVisible = true;
+        },
+        doAddSource() {
+            const f = this.addSourceForm;
+            if (f.type === 'remote_url' && !f.url) return this.$message.warning('URL 不能为空');
+            if (f.type !== 'remote_url' && !f.content) return this.$message.warning('本地内容不能为空');
+            if (!f.name) return this.$message.warning('名称不能为空');
+            axios.post('/api/sources', { type: f.type, url: f.type === 'remote_url' ? f.url : '', content: f.type === 'remote_url' ? '' : f.content, name: f.name, ua: f.ua, enabled: f.enabled }).then(() => {
+                this.$message.success('添加成功'); this.addSourceVisible = false; this.fetchSources();
+            }).catch(e => this.$message.error('添加失败: ' + apiErrorMessage(e)));
+        },
+        openSourceDialog(row) {
+            this.sourceDialogForm = {
+                id: row.id || '',
+                name: (row.name && row.name !== row.url) ? row.name : '',
+                type: row.type || 'remote_url',
+                url: row.url,
+                ua: row.ua || 'clash',
+                enabled: row.enabled !== false
+            };
+            this.sourceDialogVisible = true;
+        },
+        saveSourceDialog() {
+            const f = this.sourceDialogForm;
+            if (!f.name) return this.$message.warning('名称不能为空');
+            axios.put('/api/sources', { id: f.id, url: f.url, name: f.name, ua: f.ua, enabled: f.enabled }).then(() => {
+                this.$message.success('保存成功'); this.sourceDialogVisible = false; this.fetchSources();
+            }).catch(e => this.$message.error('保存失败: ' + apiErrorMessage(e)));
+        },
+        deleteSource(row) {
+            const ref = this.sourcePayload(row);
+            this.$confirm('确认删除？', '提示', { type: 'warning' }).then(() => {
+                axios.delete('/api/sources', { data: ref }).then(() => { this.$message.success('已删除'); this.fetchSources(); });
+            }).catch(() => {});
+        },
+        onSourceSelect(rows) { this.selectedSources = rows; },
+        batchTest() {
+            if (!this.selectedSources.length) return;
+            this.batchTesting = true;
+            let done = 0;
+            const total = this.selectedSources.length;
+            this.selectedSources.forEach(s => {
+                const key = this.sourceKey(s);
+                this.$set(this.testingStatus, key, true);
+                axios.post('/api/sources/test', this.sourcePayload(s)).then(resp => {
+                    const r = resp.data || {};
+                    // Update inline
+                    s.status = r.status || 0;
+                    s.latency = r.latency || 0;
+                    s.is_cached = r.is_cached || false;
+                    s.node_count = r.node_count || 0;
+                    s.error = r.error || '';
+                }).catch(() => {}).finally(() => {
+                    this.$set(this.testingStatus, key, false);
+                    done++;
+                    if (done === total) {
+                        this.batchTesting = false;
+                        this.fetchSources();
+                        this.$message.success(`批量测试完成，共 ${total} 个`);
+                    }
+                });
+            });
+        },
+        batchDeleteFailed() {
+            const failed = this.selectedSources.filter(s => s.status === 404 || s.status === 0 || s.status >= 500 || (s.error && s.error.length > 0));
+            if (!failed.length) return this.$message.info('选中的源中没有失败的');
+            this.$confirm(`将删除 ${failed.length} 个失败源，确认？`, '提示', { type: 'warning' }).then(() => {
+                let done = 0;
+                failed.forEach(s => {
+                    axios.delete('/api/sources', { data: this.sourcePayload(s) }).finally(() => {
+                        done++;
+                        if (done === failed.length) {
+                            this.$message.success(`已删除 ${done} 个失败源`);
+                            this.selectedSources = [];
+                            this.fetchSources();
+                        }
+                    });
+                });
+            }).catch(() => {});
+        },
+        batchDeleteSelected() {
+            if (!this.selectedSources.length) return;
+            this.$confirm(`将删除 ${this.selectedSources.length} 个源，确认？`, '提示', { type: 'warning' }).then(() => {
+                let done = 0;
+                const total = this.selectedSources.length;
+                this.selectedSources.forEach(s => {
+                    axios.delete('/api/sources', { data: this.sourcePayload(s) }).finally(() => {
+                        done++;
+                        if (done === total) {
+                            this.$message.success(`已删除 ${done} 个源`);
+                            this.selectedSources = [];
+                            this.fetchSources();
+                        }
+                    });
+                });
+            }).catch(() => {});
+        },
+        viewSourceData(row) {
+            this.sourceData = { url: row.url, name: row.name, proxies: [], total: 0, status: 0, latency: 0, proxy_groups: 0, error: '' };
+            this.sourceDataVisible = true;
+            this.sourceDataLoading = true;
+            axios.get('/api/sources/data', { params: this.sourcePayload(row) }).then(r => {
+                this.sourceData = Object.assign(this.sourceData, r.data);
+            }).catch(e => { this.sourceData.error = '加载失败: ' + e; })
+              .finally(() => { this.sourceDataLoading = false; });
+        },
+        testSource(row) {
+            const key = this.sourceKey(row);
+            this.$set(this.testingStatus, key, true);
+            axios.post('/api/sources/test', this.sourcePayload(row)).then(resp => {
+                const r = resp.data || {};
+                if (typeof r !== 'object') {
+                    this.$message.warning('测试请求已提交'); setTimeout(() => this.fetchSources(), 1500); return;
+                }
+                if (r.error) {
+                    this.$message.error(`${r.status || 0} ${r.latency || 0}ms ${r.error}`);
+                } else {
+                    this.$message.success(`${r.status} ${r.latency}ms${r.is_cached ? ' 缓存' : ''}`);
+                }
+                this.fetchSources();
+            }).catch(e => this.$message.error('测试失败: ' + e))
+              .finally(() => this.$set(this.testingStatus, key, false));
+        },
+        toggleSourceEnabled(row) {
+            axios.put('/api/sources', Object.assign(this.sourcePayload(row), { name: row.name, ua: row.ua || '', enabled: row.enabled !== false })).then(() => {
+                this.$message.success(row.enabled ? '已启用' : '已停用');
+                this.fetchSources();
+            }).catch(e => {
+                row.enabled = !row.enabled;
+                this.$message.error('保存失败: ' + apiErrorMessage(e));
+            });
+        },
+
+        // === Profiles ===
+        fetchProfiles() {
+            axios.get('/api/profiles').then(r => { this.profiles = r.data || []; });
+        },
+        openProfileDialog(row) {
+            const p = row ? JSON.parse(JSON.stringify(row)) : { name: '', enabled: true, sources: [], routing_id: '', include: '', exclude: '公告|套餐|到期', type_filter: '', server_filter: '', rename_pattern: '{code}_{tag}', sort_by: 'region', script: '', overrides: null, source_prefix: 'name' };
+            p.sources = this.normalizeProfileSources(p.sources || []);
+            p.overridesText = p.overrides ? JSON.stringify(p.overrides, null, 2) : '';
+            this.profileForm = p;
+            this.profileDialogVisible = true;
+        },
+        saveProfile() {
+            const p = JSON.parse(JSON.stringify(this.profileForm));
+            if (!p.name) return this.$message.warning('名称不能为空');
+            if (p.overridesText) {
+                try { p.overrides = JSON.parse(p.overridesText); } catch (e) { return this.$message.error('JSON 格式错误'); }
+            } else { p.overrides = null; }
+            delete p.overridesText;
+            let promise;
+            if (p.id) {
+                promise = axios.put('/api/profiles?id=' + p.id, p).catch(err => {
+                    if (err.response && err.response.status === 404) {
+                        delete p.id;
+                        return axios.post('/api/profiles', p).then(resp => axios.put('/api/profiles?id=' + resp.data.id, p));
+                    }
+                    throw err;
+                });
+            } else {
+                promise = axios.post('/api/profiles', { name: p.name }).then(resp => axios.put('/api/profiles?id=' + resp.data.id, p));
+            }
+            promise.then(() => { this.$message.success('保存成功'); this.profileDialogVisible = false; this.fetchProfiles(); })
+                .catch(e => this.$message.error('保存失败: ' + apiErrorMessage(e)));
+        },
+        deleteProfile(id) {
+            this.$confirm('确认删除？', '提示', { type: 'warning' }).then(() => {
+                axios.delete('/api/profiles?id=' + id).then(() => { this.$message.success('已删除'); this.fetchProfiles(); });
+            }).catch(() => {});
+        },
+        subUrl(token) { return location.origin + '/sub/' + token; },
+        openSub(token) { window.open(this.subUrl(token), '_blank'); },
+        copySub(token) {
+            const url = this.subUrl(token);
+            navigator.clipboard.writeText(url);
+            this.$message.success('已复制');
+        },
+        resetToken(row) {
+            this.$confirm('重置后旧链接立即失效', '重置 Token', { type: 'warning' }).then(() => {
+                axios.put('/api/profiles?id=' + row.id, { reset_token: true }).then(() => { this.$message.success('Token 已重置'); this.fetchProfiles(); });
+            }).catch(() => {});
+        },
+
+        // === Simulation ===
+        simulateProfile(row) {
+            const id = row ? row.id : this.profileForm.id;
+            if (!id) return this.$message.warning('请先保存');
+            this.simulating = true; this.simDialogVisible = true; this.simLoading = true; this.simResult = null;
+            axios.post('/api/simulate', { id }).then(r => { this.simResult = r.data; this.simExpanded = []; })
+                .catch(e => { this.$message.error('模拟失败: ' + apiErrorMessage(e)); this.simDialogVisible = false; })
+                .finally(() => { this.simulating = false; this.simLoading = false; });
+        },
+
+        // === Routing ===
+        fetchRouting() {
+            axios.get('/api/routing').then(r => {
+                this.routingProfiles = r.data || [];
+                if (this.routingProfiles.length && !this.expandedRouting.length) this.expandedRouting = [this.routingProfiles[0].id];
+            });
+        },
+        getRoutingName(id) {
+            const rp = this.routingProfiles.find(r => r.id === id);
+            return rp ? rp.name : id;
+        },
+        openRoutingDialog(rp) {
+            if (rp) {
+                this.routingForm = JSON.parse(JSON.stringify(rp));
+                (this.routingForm.rules || []).forEach(r => { r.urls = r.urls || []; r.payload = r.payload || []; r.extraProxies = r.extraProxies || []; });
+            } else { this.routingForm = { name: '', rules: [] }; }
+            this.catalogChecked = {};
+            this.catalogFilter = '';
+            this.routingDialogVisible = true;
+        },
+        addRuleItem() {
+            this.routingForm.rules = this.routingForm.rules || [];
+            this.routingForm.rules.push({ name: '', gfw: false, urls: [], payload: [], extraProxies: [] });
+        },
+        moveRule(index, dir) {
+            const rules = this.routingForm.rules;
+            const target = index + dir;
+            if (target < 0 || target >= rules.length) return;
+            const temp = rules[index];
+            this.$set(rules, index, rules[target]);
+            this.$set(rules, target, temp);
+        },
+        openRuleDetail(index, row) {
+            // 确保所有字段都是响应式数组
+            if (!row.urls) this.$set(row, 'urls', []);
+            if (!row.payload) this.$set(row, 'payload', []);
+            if (!row.extraProxies) this.$set(row, 'extraProxies', []);
+            this.ruleDetailData = row;
+            this.ruleDetailVisible = true;
+        },
+        urlDisplayName(url) {
+            if (!url) return '';
+            // 从 URL 提取规则名，如 .../Clash/YouTube/YouTube.yaml → YouTube
+            const parts = url.split('/');
+            const yaml = parts[parts.length - 1];
+            return yaml.replace('.yaml', '').replace('_Classical', '');
+        },
+        saveRouting() {
+            const rp = JSON.parse(JSON.stringify(this.routingForm));
+            if (!rp.name) return this.$message.warning('名称不能为空');
+            rp.rules.forEach(r => {
+                r.urls = (r.urls || []).filter(u => u.trim());
+                r.payload = (r.payload || []).filter(p => p.trim());
+                r.extraProxies = (r.extraProxies || []).filter(e => e.trim());
+            });
+            rp.rules = rp.rules.filter(r => r.name.trim());
+            const req = rp.id ? axios.put('/api/routing?id=' + rp.id, rp) : axios.post('/api/routing', rp);
+            req.then(() => { this.$message.success('保存成功'); this.routingDialogVisible = false; this.fetchRouting(); })
+                .catch(e => this.$message.error('保存失败: ' + apiErrorMessage(e)));
+        },
+        deleteRouting(id) {
+            this.$confirm('确认删除？关联的聚合订阅将回退为默认规则。', '提示', { type: 'warning' }).then(() => {
+                axios.delete('/api/routing?id=' + id).then(() => { this.$message.success('已删除'); this.fetchRouting(); });
+            }).catch(() => {});
+        },
+
+        // === Rule Catalog ===
+        fetchCatalog() {
+            axios.get('/api/routing/catalog').then(r => {
+                this.ruleCatalog = r.data || [];
+            }).catch(() => {});
+        },
+        isCatalogChecked(catId, ruleId) {
+            return !!(this.catalogChecked[catId] && this.catalogChecked[catId][ruleId]);
+        },
+        toggleCatalog(catId, ruleId, val, rule) {
+            if (!this.catalogChecked[catId]) this.$set(this.catalogChecked, catId, {});
+            this.$set(this.catalogChecked[catId], ruleId, val);
+        },
+        // 分类全选/反选
+        isCatAllChecked(cat) {
+            return cat.rules.length > 0 && cat.rules.every(r => this.isCatalogChecked(cat.id, r.id) || this.isRuleAlreadyAdded(r));
+        },
+        isCatPartial(cat) {
+            const checked = cat.rules.filter(r => this.isCatalogChecked(cat.id, r.id)).length;
+            return checked > 0 && !this.isCatAllChecked(cat);
+        },
+        catCheckedCount(cat) {
+            return cat.rules.filter(r => this.isCatalogChecked(cat.id, r.id)).length;
+        },
+        toggleCatAll(cat, val) {
+            if (!this.catalogChecked[cat.id]) this.$set(this.catalogChecked, cat.id, {});
+            cat.rules.forEach(r => {
+                if (!this.isRuleAlreadyAdded(r)) {
+                    this.$set(this.catalogChecked[cat.id], r.id, val);
+                }
+            });
+        },
+        // 检查规则是否已添加到当前 rules 列表
+        isRuleAlreadyAdded(rule) {
+            const rules = this.routingForm.rules || [];
+            const ruleUrls = rule.urls || (rule.url ? [rule.url] : []);
+            if (ruleUrls.length) return rules.some(r => (r.urls || []).some(u => ruleUrls.includes(u)));
+            if (rule.payload && rule.payload.length) return rules.some(r => {
+                const p = r.payload || [];
+                return rule.payload.every(rp => p.includes(rp));
+            });
+            return false;
+        },
+        // 添加选中规则：每条规则 → 独立的策略组
+        addCatalogRules() {
+            const added = [];
+            this.ruleCatalog.forEach(cat => {
+                const checked = this.catalogChecked[cat.id];
+                if (!checked) return;
+                cat.rules.forEach(rule => {
+                    if (!checked[rule.id]) return;
+                    const item = { name: rule.name, gfw: cat.gfw, urls: [], payload: [], extraProxies: [] };
+                    if (rule.urls && rule.urls.length) item.urls = [...rule.urls];
+                    else if (rule.url) item.urls = [rule.url];
+                    if (rule.payload) item.payload = [...rule.payload];
+                    this.routingForm.rules.push(item);
+                    added.push(rule.name);
+                });
+            });
+            this.catalogChecked = {};
+            if (added.length) this.$message.success('已添加: ' + added.join(', '));
+        },
+
+        // === Utils ===
+        tableRowClassName({ row }) { return row.status >= 500 ? 'invalid-row' : ''; },
+        getStatusTagType(s) { if (s === 0) return 'info'; if (s >= 200 && s < 300) return 'success'; if (s >= 500) return 'danger'; return 'warning'; },
+        getStatusText(s) { return s === 0 ? '...' : s; },
+        sourceKey(row) { return row.id || row.url; },
+        sourcePayload(row) { return { id: row.id }; },
+        sourceTypeText(type) {
+            if (type === 'local_uri') return '本地URI';
+            if (type === 'local_yaml') return '本地YAML';
+            return '远程URL';
+        },
+        sourceLocationText(row) {
+            if (row.type === 'local_uri') return 'local://uri';
+            if (row.type === 'local_yaml') return 'local://yaml';
+            return row.url || '';
+        },
+        normalizeProfileSources(list) {
+            return list.map(ref => {
+                const source = this.sources.find(s => s.id === ref || s.url === ref);
+                return source ? this.sourceKey(source) : ref;
+            });
+        },
+        transferFilter(query, item) {
+            const q = query.toLowerCase();
+            return item.label.toLowerCase().indexOf(q) > -1 || item.url.toLowerCase().indexOf(q) > -1 || (item.name && item.name.toLowerCase().indexOf(q) > -1);
+        }
+    },
+    created() {
+        this.fetchVersion();
+        this.checkAuth();
+        this.fetchCatalog();
+    },
+    beforeDestroy() {},
+    computed: {
+        sourceTransferData() {
+            return this.sources.map(s => {
+                const location = this.sourceLocationText(s);
+                const label = (s.name && s.name !== s.url) ? s.name : (location.length > 40 ? location.substring(0,40) + '...' : location);
+                return { id: this.sourceKey(s), url: location, label: label, name: s.name || '' };
+            });
+        },
+        hasCheckedCatalog() {
+            return this.checkedCatalogCount > 0;
+        },
+        checkedCatalogCount() {
+            let count = 0;
+            Object.values(this.catalogChecked).forEach(cat => {
+                Object.values(cat).forEach(v => { if (v) count++; });
+            });
+            return count;
+        },
+        filteredCatalog() {
+            if (!this.catalogFilter) return this.ruleCatalog;
+            const q = this.catalogFilter.toLowerCase();
+            return this.ruleCatalog.map(cat => {
+                const rules = cat.rules.filter(r => r.name.toLowerCase().indexOf(q) > -1 || r.id.toLowerCase().indexOf(q) > -1);
+                if (!rules.length) return null;
+                return { id: cat.id, name: cat.name, gfw: cat.gfw, rules };
+            }).filter(Boolean);
+        }
+    }
+});
+</script>
+</body>
+</html>

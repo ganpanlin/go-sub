@@ -1,0 +1,136 @@
+[
+  {
+    "id": "default",
+    "name": "默认分流规则",
+    "rules": [
+      {
+        "name": "🛑 广告拦截",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/AdvertisingLite/AdvertisingLite_Classical.yaml"
+        ],
+        "extraProxies": [
+          "REJECT"
+        ]
+      },
+      {
+        "name": "🤖 AI服务",
+        "gfw": true,
+        "payload": [
+          "DOMAIN-SUFFIX,openai.com",
+          "DOMAIN-SUFFIX,ai.com",
+          "DOMAIN-SUFFIX,chat.com",
+          "DOMAIN-SUFFIX,chatgpt.com",
+          "DOMAIN-SUFFIX,claude.ai",
+          "DOMAIN-SUFFIX,anthropic.com",
+          "DOMAIN-SUFFIX,gemini.google.com",
+          "DOMAIN-SUFFIX,bard.google.com",
+          "DOMAIN-SUFFIX,copilot.microsoft.com",
+          "DOMAIN-SUFFIX,perplexity.ai",
+          "DOMAIN-SUFFIX,deepseek.com"
+        ]
+      },
+      {
+        "name": "📢 谷歌服务",
+        "gfw": true,
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Google/Google.yaml"
+        ]
+      },
+      {
+        "name": "🎬 流媒体",
+        "gfw": true,
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/YouTube/YouTube.yaml",
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/YouTubeMusic/YouTubeMusic.yaml",
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Netflix/Netflix.yaml",
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Spotify/Spotify.yaml",
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/TikTok/TikTok.yaml",
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/DisneyPlus/DisneyPlus.yaml"
+        ]
+      },
+      {
+        "name": "🐦 社交平台",
+        "gfw": true,
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Twitter/Twitter.yaml",
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Facebook/Facebook.yaml",
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Instagram/Instagram.yaml",
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Telegram/Telegram.yaml",
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Discord/Discord.yaml"
+        ]
+      },
+      {
+        "name": "💻 GitHub",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/GitHub/GitHub.yaml"
+        ]
+      },
+      {
+        "name": "🍎 苹果服务",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Apple/Apple.yaml"
+        ]
+      },
+      {
+        "name": "Ⓜ️ 微软服务",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Microsoft/Microsoft.yaml"
+        ]
+      },
+      {
+        "name": "🎮 游戏平台",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Steam/Steam.yaml"
+        ]
+      },
+      {
+        "name": "☁️ OneDrive",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/OneDrive/OneDrive.yaml"
+        ]
+      },
+      {
+        "name": "🌐 Cloudflare",
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Cloudflare/Cloudflare.yaml"
+        ]
+      },
+      {
+        "name": "🐧 Linux.do",
+        "gfw": true,
+        "payload": [
+          "DOMAIN-SUFFIX,linux.do",
+          "DOMAIN-SUFFIX,idcflare.com"
+        ]
+      },
+      {
+        "name": "zoom.us",
+        "gfw": true,
+        "payload": [
+          "DOMAIN-SUFFIX,zoom.us"
+        ]
+      },
+      {
+        "name": "Claude",
+        "gfw": true,
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Claude/Claude.yaml"
+        ]
+      },
+      {
+        "name": "Gemini",
+        "gfw": true,
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Gemini/Gemini.yaml"
+        ]
+      },
+      {
+        "name": "Copilot",
+        "gfw": true,
+        "urls": [
+          "https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Copilot/Copilot.yaml"
+        ]
+      }
+    ]
+  }
+]
