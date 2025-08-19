@@ -1,0 +1,17 @@
+.git
+.claude
+.tmp-go-build
+cache
+data/auth.json
+data/cache
+data/profiles.json
+data/routing.json
+data/sources.json
+data/rulesets.json
+docker-data
+*.exe
+*.log
+*.pid
+node_modules
+dist
+tmp

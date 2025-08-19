@@ -1,0 +1,26 @@
+services:
+  proxy-filter:
+    pull_policy: build
+    build:
+      context: .
+      args:
+        VERSION: local
+        COMMIT: unknown
+        BUILD_TIME: unknown
+    image: proxy-filter:local
+    container_name: proxy-filter
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 256m
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./frontend:/app/frontend
+    environment:
+      TZ: Asia/Shanghai
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
