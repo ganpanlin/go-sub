@@ -1,7 +1,7 @@
 package appconfig
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -61,9 +61,9 @@ func Init(port, configPath, dataDir, frontendPath string, httpTimeoutSec, cacheT
 		os.MkdirAll(absDataDir, 0755)
 		os.MkdirAll(filepath.Join(absDataDir, "cache"), 0755)
 
-		log.Printf("[CONFIG] Base dir: %s", baseDir)
-		log.Printf("[CONFIG] Data dir: %s", absDataDir)
-		log.Printf("[CONFIG] Frontend: %s", absFrontendPath)
+		slog.Info("config initialized", "base_dir", baseDir)
+		slog.Info("config initialized", "data_dir", absDataDir)
+		slog.Info("config initialized", "frontend", absFrontendPath)
 	})
 }
 

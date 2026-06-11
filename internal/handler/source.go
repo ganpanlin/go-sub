@@ -6,7 +6,7 @@ import (
 	"go-sub/internal/parser"
 	"go-sub/internal/provider"
 	"go-sub/internal/source"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 )
@@ -33,11 +33,11 @@ type SourceResponse struct {
 func GetSourcesHandler(w http.ResponseWriter, r *http.Request) {
 	configs, err := source.LoadAll()
 	if err != nil {
-		log.Printf("[SOURCES] LoadAll failed: %v", err)
+		slog.Error("sources load failed", "error", err)
 		http.Error(w, "Failed to read sources file", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("[SOURCES] Loaded %d configs from disk", len(configs))
+	slog.Info("sources loaded from disk", "count", len(configs))
 
 	cacheHits := 0
 	asyncFetches := 0
@@ -74,7 +74,7 @@ func GetSourcesHandler(w http.ResponseWriter, r *http.Request) {
 			if _, loaded := asyncFetchInFlight.LoadOrStore(runtimeURL, true); !loaded {
 				go func(idx int, cfg2 source.Config, url string) {
 					defer asyncFetchInFlight.Delete(url)
-					log.Printf("[SOURCES] Async fetch: %s", url)
+					slog.Info("async source fetch", "url", url)
 					provider.FetchAndParseYAML(url)
 				}(i, cfg, runtimeURL)
 			}
@@ -82,11 +82,11 @@ func GetSourcesHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("[SOURCES] Response: %d sources, %d cache hits, %d async fetches", len(sources), cacheHits, asyncFetches)
+	slog.Info("sources response", "total", len(sources), "cache_hits", cacheHits, "async_fetches", asyncFetches)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(sources); err != nil {
-		log.Printf("[SOURCES] Encode error: %v", err)
+		slog.Error("sources encode error", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 }

@@ -3,7 +3,7 @@ package routing
 import (
 	"encoding/json"
 	"go-sub/internal/appconfig"
-	"log"
+	"log/slog"
 	"os"
 	"sync"
 )
@@ -46,11 +46,11 @@ func GetCatalog() []RuleCategory {
 	path := catalogPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Printf("[catalog] failed to read %s: %v, returning empty", path, err)
+		slog.Error("catalog read failed", "path", path, "error", err)
 		return []RuleCategory{}
 	}
 	if err := json.Unmarshal(data, &catalogData); err != nil {
-		log.Printf("[catalog] failed to parse %s: %v", path, err)
+		slog.Error("catalog parse failed", "path", path, "error", err)
 		return []RuleCategory{}
 	}
 	return catalogData
@@ -67,14 +67,14 @@ func EnsureCatalogDefault() {
 	builtIn := defaultCatalog()
 	data, err := json.MarshalIndent(builtIn, "", "  ")
 	if err != nil {
-		log.Printf("[catalog] failed to marshal default: %v", err)
+		slog.Error("catalog marshal failed", "error", err)
 		return
 	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		log.Printf("[catalog] failed to write default: %v", err)
+		slog.Error("catalog write failed", "error", err)
 		return
 	}
-	log.Printf("[catalog] created default catalog at %s", path)
+	slog.Info("created default catalog", "path", path)
 }
 
 // SaveCatalog saves the catalog to data/catalog.json and updates the cache.

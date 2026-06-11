@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"go-sub/internal/datastore"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -135,7 +135,7 @@ func IsAuthenticated(r *http.Request) bool {
 	}
 	valid := ValidateJWT(token)
 	if !valid {
-		log.Printf("[AUTH] JWT validation failed for %s (token prefix: %s...)", r.URL.Path, token[:20])
+		slog.Warn("JWT validation failed", "path", r.URL.Path, "token_prefix", token[:20])
 	}
 	return valid
 }

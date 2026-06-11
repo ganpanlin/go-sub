@@ -10,9 +10,16 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// rate limiters: subscription endpoints (10 req/s), API endpoints (30 req/s)
+var (
+	subLimiter  = middleware.NewLimiterStore(10, 20)
+	apiLimiter  = middleware.NewLimiterStore(30, 60)
+)
+
 func NewRouter() *mux.Router {
 	r := mux.NewRouter()
 	r.Use(middleware.CorsMiddleware)
+	r.Use(middleware.LoggingMiddleware)
 
 	// API routes
 	api := r.PathPrefix("/api").Subrouter()
@@ -59,8 +66,19 @@ func NewRouter() *mux.Router {
 	api.HandleFunc("/simulate", handler.SimulateHandler).Methods("POST")
 	api.HandleFunc("/preview", handler.GeneratePreviewHandler).Methods("GET")
 
-	// Subscription output by profile ID
-	r.HandleFunc("/sub/{id:[a-f0-9]+}", handler.SubHandler).Methods("GET", "OPTIONS")
+	// Health Check (TCP ping on nodes)
+	api.HandleFunc("/health-check", handler.HealthCheckHandler).Methods("POST")
+
+	// Profile access statistics
+	api.HandleFunc("/profiles/stats", handler.ProfileStatsHandler).Methods("GET")
+
+	// Config import/export
+	api.HandleFunc("/config/export", handler.ExportConfigHandler).Methods("GET")
+	api.HandleFunc("/config/import", handler.ImportConfigHandler).Methods("POST")
+
+	// Subscription output by profile ID (rate-limited)
+	subHandler := middleware.Middleware(subLimiter)(http.HandlerFunc(handler.SubHandler))
+	r.Handle("/sub/{id:[a-f0-9]+}", subHandler).Methods("GET", "OPTIONS")
 
 	// Legacy filter endpoint
 	r.HandleFunc("/filter", handler.FilterHandler).Methods("GET", "OPTIONS")

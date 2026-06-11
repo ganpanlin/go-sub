@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"go-sub/internal/appconfig"
@@ -12,10 +13,13 @@ import (
 	"go-sub/internal/rule"
 	"go-sub/internal/scheduler"
 	"go-sub/internal/settings"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 )
 
 func main() {
@@ -36,6 +40,23 @@ func main() {
 	defaultDataDir := findDefaultDataDir()
 	if defaultDataDir != "" {
 		datastore.InitDefaults(defaultDataDir)
+	}
+
+	// Ensure config.json exists in working directory (for scheduler etc.)
+	configFile := appconfig.Get().ConfigPath
+	if _, err := os.Stat(configFile); err != nil {
+		// Try default-data/config.json first, then config.example.json
+		for _, src := range []string{
+			filepath.Join(defaultDataDir, "config.json"),
+			filepath.Join(filepath.Dir(os.Args[0]), "config.example.json"),
+			"config.example.json",
+		} {
+			if data, err := os.ReadFile(src); err == nil {
+				os.WriteFile(configFile, data, 0644)
+				slog.Info("created config from template", "source", src)
+				break
+			}
+		}
 	}
 
 	// Initialize disk cache for source bodies
@@ -61,9 +82,37 @@ func main() {
 	settings.MigrateLegacySources()
 	go scheduler.Start()
 
+	// Create HTTP server
 	r := router.NewRouter()
-	log.Printf("Server is running on http://localhost:%s", *port)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", *port), r))
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%s", *port),
+		Handler: r,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		slog.Info("server started", "addr", "http://localhost:"+*port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	slog.Info("shutting down", "signal", sig)
+
+	// Give outstanding requests 10 seconds to complete
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		slog.Error("server forced to shutdown", "error", err)
+	}
+
+	slog.Info("server stopped")
 }
 
 // findDefaultDataDir locates the default-data directory for first-run initialization.

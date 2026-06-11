@@ -3,6 +3,7 @@ package cache
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -99,13 +100,16 @@ func Delete(key string) {
 	}
 }
 
-// DeleteByPrefix removes all keys starting with the given prefix.
+// DeleteByPrefix removes all keys starting with the given prefix from memory and disk.
 func DeleteByPrefix(prefix string) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	for key := range memCache {
 		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
 			delete(memCache, key)
+			if diskDir != "" {
+				go removeFromDisk(key)
+			}
 		}
 	}
 }
@@ -188,6 +192,6 @@ func loadFromDisk() {
 		loaded++
 	}
 	if loaded > 0 || expired > 0 {
-		fmt.Printf("[cache] Loaded %d items from disk, removed %d expired\n", loaded, expired)
+		slog.Info("cache loaded from disk", "loaded", loaded, "expired", expired)
 	}
 }

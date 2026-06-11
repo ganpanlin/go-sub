@@ -3,7 +3,7 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -46,7 +46,7 @@ func ApiResponseMiddleware(next http.Handler) http.Handler {
 				msg = http.StatusText(rec.status)
 			}
 			data = nil
-			log.Printf("[API] %s %s → %d %s (body=%d bytes)", req.Method, req.URL.Path, rec.status, msg, len(body))
+			slog.Info("api error response", "method", req.Method, "path", req.URL.Path, "status", rec.status, "msg", msg, "body_bytes", len(body))
 		} else if rec.status == http.StatusNoContent || len(bytes.TrimSpace(body)) == 0 {
 			data = nil
 		} else {
@@ -55,7 +55,7 @@ func ApiResponseMiddleware(next http.Handler) http.Handler {
 				if strings.Contains(contentType, "application/json") {
 					if err := json.Unmarshal(body, &data); err != nil {
 						data = string(body)
-						log.Printf("[API] %s %s → json parse error: %v", req.Method, req.URL.Path, err)
+						slog.Error("api json parse error", "method", req.Method, "path", req.URL.Path, "error", err)
 					}
 				} else {
 					data = string(body)

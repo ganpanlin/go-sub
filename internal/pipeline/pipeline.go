@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"go-sub/internal/provider"
 	"go-sub/internal/routing"
@@ -33,6 +34,11 @@ type Result struct {
 // Run fetches all sources for a profile, deduplicates, filters, and builds routing config.
 // This is the shared data preparation pipeline used by /sub, /simulate, /preview.
 func Run(profile *rule.Profile) (*Result, error) {
+	return RunCtx(context.Background(), profile)
+}
+
+// RunCtx is like Run but accepts a context for cancellation and timeout propagation.
+func RunCtx(ctx context.Context, profile *rule.Profile) (*Result, error) {
 	// 1. Resolve source URLs
 	sourceURLs := source.EnabledRuntimeURLs(profile.Sources)
 	sourceNames := source.NameMap()
@@ -61,7 +67,7 @@ func Run(profile *rule.Profile) (*Result, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			config, status, latency, isCached, err := provider.FetchAndParseYAML(url)
+			config, status, latency, isCached, err := provider.FetchAndParseYAMLCtx(ctx, url, provider.DefaultRetryCount)
 			_ = status
 			_ = latency
 			_ = isCached

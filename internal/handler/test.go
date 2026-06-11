@@ -5,7 +5,7 @@ import (
 	"go-sub/internal/cache"
 	"go-sub/internal/provider"
 	"go-sub/internal/source"
-	"log"
+	"log/slog"
 	"net/http"
 )
 
@@ -65,7 +65,7 @@ func TestSourceHandler(w http.ResponseWriter, r *http.Request) {
 		resp.Error = err.Error()
 	}
 
-	log.Printf("Manually tested source %s, status: %d, latency: %dms, cached: %t, error: %v", runtimeURL, status, latency, isCached, err)
+	slog.Info("source tested", "url", runtimeURL, "status", status, "latency_ms", latency, "cached", isCached, "error", err)
 
 	// Invalidate all sub caches since source data has changed
 	cache.DeleteByPrefix("sub:")

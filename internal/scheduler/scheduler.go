@@ -5,7 +5,7 @@ import (
 	"go-sub/internal/appconfig"
 	"go-sub/internal/provider"
 	"go-sub/internal/source"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 )
@@ -19,30 +19,30 @@ type Config struct {
 func Start() {
 	file, err := os.ReadFile(appconfig.Get().ConfigPath)
 	if err != nil {
-		log.Printf("Could not read config.json, scheduled refresh is disabled.")
+		slog.Info("scheduled refresh disabled, config.json not found")
 		return
 	}
 
 	var config Config
 	if err := json.Unmarshal(file, &config); err != nil {
-		log.Printf("Error parsing config.json for scheduler settings: %v", err)
+		slog.Error("scheduler config parse error", "error", err)
 		return
 	}
 
 	if config.RefreshIntervalMinutes <= 0 {
-		log.Println("Scheduled refresh is disabled as per config.")
+		slog.Info("scheduled refresh disabled by config")
 		return
 	}
 
 	interval := time.Duration(config.RefreshIntervalMinutes) * time.Minute
 	ticker := time.NewTicker(interval)
 
-	log.Printf("Scheduled refresh enabled. Will run every %d minutes.", config.RefreshIntervalMinutes)
+	slog.Info("scheduled refresh enabled", "interval_minutes", config.RefreshIntervalMinutes)
 
 	go func() {
 		for {
 			<-ticker.C
-			log.Println("Running scheduled refresh of all sources...")
+			slog.Info("running scheduled refresh")
 			refreshAllSources()
 		}
 	}()
@@ -51,10 +51,10 @@ func Start() {
 func refreshAllSources() {
 	sources, err := source.LoadAll()
 	if err != nil {
-		log.Printf("Could not read sources.json for scheduled refresh: %v", err)
+		slog.Error("scheduler failed to read sources", "error", err)
 		return
 	}
-	log.Printf("Found %d sources to refresh.", len(sources))
+	slog.Info("sources to refresh", "count", len(sources))
 
 	for _, src := range sources {
 		if !src.Enabled {
@@ -65,7 +65,7 @@ func refreshAllSources() {
 			config, status, latency, isCached, err := provider.FetchAndParseYAML(runtimeURL)
 			_ = config
 			_ = err
-			log.Printf("Refreshed source %s, status: %d, latency: %dms, cached: %t", runtimeURL, status, latency, isCached)
+			slog.Info("refreshed source", "url", runtimeURL, "status", status, "latency_ms", latency, "cached", isCached)
 		}(src)
 	}
 }

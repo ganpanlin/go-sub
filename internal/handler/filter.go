@@ -9,7 +9,7 @@ import (
 	"go-sub/internal/proxy"
 	"go-sub/internal/source"
 	"gopkg.in/yaml.v3"
-	"log"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -83,7 +83,7 @@ func FilterHandler(w http.ResponseWriter, r *http.Request) {
 				if item, ok := cached.(provider.CachedItem); ok {
 					config, err := parser.ParseYAML(item.Body)
 					if err != nil {
-						log.Printf("Error parsing cached content for %s: %v", runtimeURL, err)
+						slog.Error("error parsing cached content", "url", runtimeURL, "error", err)
 						continue
 					}
 
@@ -102,7 +102,7 @@ func FilterHandler(w http.ResponseWriter, r *http.Request) {
 
 			config, _, _, _, err := provider.FetchAndParseYAML(runtimeURL)
 			if err != nil {
-				log.Printf("Error fetching source %s: %v", runtimeURL, err)
+				slog.Error("error fetching source", "url", runtimeURL, "error", err)
 				continue
 			}
 			if firstConfig == nil && config != nil {
@@ -183,19 +183,19 @@ func filterProxies(proxies []interface{}, nameFilter, typeFilter, serverFilter s
 
 	nameRegex, err := regexp.Compile(proxy.ExpandRegionNameFilter(nameFilter))
 	if err != nil {
-		log.Printf("Invalid name regex: %v", err)
+		slog.Error("invalid name regex", "error", err)
 		nameRegex = regexp.MustCompile(".*")
 	}
 
 	typeRegex, err := regexp.Compile(typeFilter)
 	if err != nil {
-		log.Printf("Invalid type regex: %v", err)
+		slog.Error("invalid type regex", "error", err)
 		typeRegex = regexp.MustCompile(".*")
 	}
 
 	serverRegex, err := regexp.Compile(serverFilter)
 	if err != nil {
-		log.Printf("Invalid server regex: %v", err)
+		slog.Error("invalid server regex", "error", err)
 		serverRegex = regexp.MustCompile(".*")
 	}
 

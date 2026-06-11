@@ -8,6 +8,7 @@ import (
 	"go-sub/internal/converter"
 	"go-sub/internal/pipeline"
 	"go-sub/internal/rule"
+	"go-sub/internal/stats"
 	"net/http"
 	"strings"
 	"time"
@@ -60,9 +61,18 @@ func SubHandler(w http.ResponseWriter, r *http.Request) {
 			// Serve stale immediately
 			w.Header().Set("X-Cache", "STALE")
 			w.Write(data)
-			// Refresh in background
+			// Refresh in background and update cache
 			go func() {
-				pipeline.Run(profile)
+				result, err := pipeline.Run(profile)
+				if err != nil {
+					return
+				}
+				c := converter.Get(clientType)
+				output, _, convErr := c.Convert(result.Proxies, result.Groups, result.RuleProviders, result.Rules, result.Extra)
+				if convErr != nil {
+					return
+				}
+				cache.Set(cacheKey, output, time.Duration(appconfig.Get().FilterCacheTTLMinutes)*time.Minute)
 			}()
 			return
 		}
@@ -82,6 +92,9 @@ func SubHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Conversion error (%s): %s", clientType, err.Error()), http.StatusInternalServerError)
 		return
 	}
+
+	// Record access statistics
+	stats.GetTracker().Record(profile.ID, r.RemoteAddr, r.UserAgent(), clientType, len(result.Proxies))
 
 	// Cache
 	cache.Set(cacheKey, output, time.Duration(appconfig.Get().FilterCacheTTLMinutes)*time.Minute)

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"go-sub/internal/cache"
 	"go-sub/internal/provider"
 	"sync"
 )
@@ -30,7 +29,6 @@ func updateSourceStatusFromConfig(url string, config map[string]interface{}, sta
 		NodeCount: nc,
 	}
 	sourceStatusMu.Unlock()
-	_ = cache.Get // keep import
 	return nc
 }
 

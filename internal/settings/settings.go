@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"go-sub/internal/appconfig"
 	"go-sub/internal/source"
-	"log"
+	"log/slog"
 	"os"
 )
 
@@ -96,8 +96,8 @@ func MigrateLegacySources() {
 		return
 	}
 	if err := source.SaveAll(migrated); err != nil {
-		log.Printf("Failed to migrate legacy sources: %v", err)
+		slog.Error("legacy source migration failed", "error", err)
 		return
 	}
-	log.Printf("Migrated %d legacy sources to sources.json", len(migrated))
+	slog.Info("migrated legacy sources", "count", len(migrated))
 }

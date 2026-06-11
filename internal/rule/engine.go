@@ -3,7 +3,7 @@ package rule
 import (
 	"fmt"
 	"go-sub/internal/proxy"
-	"log"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
@@ -172,7 +172,7 @@ func (e *Engine) runTransform(pMap map[string]interface{}, name, typ, server str
 	// Call transform(node)
 	ret, err := e.scriptFn(goja.Undefined(), nodeObj)
 	if err != nil {
-		log.Printf("JS transform error: %v", err)
+		slog.Error("JS transform error", "error", err)
 		return false
 	}
 

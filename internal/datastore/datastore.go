@@ -3,7 +3,7 @@ package datastore
 import (
 	"encoding/json"
 	"go-sub/internal/appconfig"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -13,6 +13,11 @@ var mu sync.Mutex
 
 func dataPath(name string) string {
 	return appconfig.Get().DataFile(name)
+}
+
+// DataFilePath returns the full path for a named data file (exported for handler use).
+func DataFilePath(name string) string {
+	return dataPath(name)
 }
 
 // InitDefaults copies default data files from defaultDataDir if they don't exist in data dir.
@@ -33,15 +38,15 @@ func InitDefaults(defaultDataDir string) {
 		}
 		data, err := os.ReadFile(src)
 		if err != nil {
-			log.Printf("[INIT] Failed to read default %s: %v", name, err)
+			slog.Error("failed to read default file", "name", name, "error", err)
 			continue
 		}
 		os.MkdirAll(filepath.Dir(target), 0755)
 		if err := os.WriteFile(target, data, 0644); err != nil {
-			log.Printf("[INIT] Failed to write %s: %v", name, err)
+			slog.Error("failed to write default file", "name", name, "error", err)
 			continue
 		}
-		log.Printf("[INIT] Created %s from defaults", name)
+		slog.Info("created default from defaults", "name", name)
 	}
 }
 

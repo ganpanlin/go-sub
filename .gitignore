@@ -29,7 +29,7 @@ docker-data/
 Thumbs.db
 
 # Local config (contains tokens/URLs)
-config.json
+/config.json
 
 # Binary output directory
 build/
