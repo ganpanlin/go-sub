@@ -20,9 +20,9 @@ type RulePreset struct {
 
 // RuleCategory 定义一个规则分类
 type RuleCategory struct {
-	ID    string       `json:"id"`    // 分类标识，如 "ai"
-	Name  string       `json:"name"`  // 分类名，如 "🤖 AI服务"
-	GFW   bool         `json:"gfw"`   // 该分类是否默认走代理
+	ID    string       `json:"id"`   // 分类标识，如 "ai"
+	Name  string       `json:"name"` // 分类名，如 "🤖 AI服务"
+	GFW   bool         `json:"gfw"`  // 该分类是否默认走代理
 	Rules []RulePreset `json:"rules"`
 }
 

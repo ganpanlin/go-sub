@@ -33,3 +33,6 @@ Thumbs.db
 
 # Binary output directory
 build/
+
+# AI tool workspace memory
+.workbuddy/

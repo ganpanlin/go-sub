@@ -48,7 +48,7 @@ func BuildConfig(rp *RoutingProfile, proxyNames []string) (proxyGroups []interfa
 	// 🇨🇳 国内直连
 	proxyGroups = append(proxyGroups, map[string]interface{}{
 		"name": "国内网站", "type": "select",
-		"proxies":     append([]string{"DIRECT", "自动选择(最低延迟)", "负载均衡"}, allProxyNamesWithAuto(proxyNames)...),
+		"proxies":     []string{"DIRECT", "自动选择(最低延迟)", "负载均衡"},
 		"include-all": true,
 		"url":         "https://www.baidu.com/favicon.ico",
 	})
@@ -59,7 +59,7 @@ func BuildConfig(rp *RoutingProfile, proxyNames []string) (proxyGroups []interfa
 	// 🌍 国外网站
 	proxyGroups = append(proxyGroups, map[string]interface{}{
 		"name": "国外网站", "type": "select",
-		"proxies":     append([]string{"DIRECT", "自动选择(最低延迟)", "负载均衡"}, allProxyNamesWithAuto(proxyNames)...),
+		"proxies":     []string{"DIRECT", "自动选择(最低延迟)", "负载均衡"},
 		"include-all": true,
 		"url":         "https://www.bing.com/favicon.ico",
 	})
@@ -70,26 +70,34 @@ func BuildConfig(rp *RoutingProfile, proxyNames []string) (proxyGroups []interfa
 	// 🔒 被墙网站
 	proxyGroups = append(proxyGroups, map[string]interface{}{
 		"name": "被墙网站", "type": "select",
-		"proxies":     append([]string{"自动选择(最低延迟)", "负载均衡", "DIRECT"}, allProxyNamesWithAuto(proxyNames)...),
+		"proxies":     []string{"自动选择(最低延迟)", "负载均衡", "DIRECT"},
 		"include-all": true,
 	})
 
-	// Utility groups
+	// Utility groups: gstatic generate_204 is a zero-body endpoint —
+	// much lighter than fetching an image for periodic latency tests.
 	proxyGroups = append(proxyGroups, map[string]interface{}{
 		"name": "自动选择(最低延迟)", "type": "url-test",
 		"include-all": true, "tolerance": 20,
-		"url": "https://play-lh.googleusercontent.com/1UF2WCBNl4918bNk8JsILadL9-agIjRtMpdjuPgx2ohsxnQyspdWDwYMquW1-r8mSQOSjSLOY4g=w720-rw",
+		"url": "http://www.gstatic.com/generate_204",
 	})
 	proxyGroups = append(proxyGroups, map[string]interface{}{
 		"name": "负载均衡", "type": "load-balance",
 		"include-all": true, "hidden": true, "strategy": "sticky-sessions",
-		"url": "https://play-lh.googleusercontent.com/1UF2WCBNl4918bNk8JsILadL9-agIjRtMpdjuPgx2ohsxnQyspdWDwYMquW1-r8mSQOSjSLOY4g=w720-rw",
+		"url": "http://www.gstatic.com/generate_204",
 	})
 
-	// Final catch-all rules
+	// Final catch-all rules. Private-network bypass comes first so loopback/LAN
+	// traffic never falls through to MATCH and gets sent to a remote proxy node
+	// (e.g. a client updating its subscription from http://localhost:port).
 	rules = []string{
 		"IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
 		"IP-CIDR6,::1/128,DIRECT,no-resolve",
+		"DOMAIN,localhost,DIRECT",
+		"IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
+		"IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
+		"IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
+		"IP-CIDR,169.254.0.0/16,DIRECT,no-resolve",
 	}
 	rules = append(rules, generatedRules...)
 	rules = append(rules, "GEOSITE,gfw,被墙网站")
@@ -126,10 +134,6 @@ func buildRuleProvider(url string) map[string]interface{} {
 		"format":   "yaml",
 		"url":      url,
 	}
-}
-
-func allProxyNamesWithAuto(names []string) []string {
-	return nil
 }
 
 func sanitizeProviderName(name string) string {

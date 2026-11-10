@@ -96,3 +96,46 @@ func assertContainsRule(t *testing.T, rules []string, want string) {
 	}
 	t.Fatalf("expected rules to contain %q, got %#v", want, rules)
 }
+
+func TestBuildConfigPrivateNetworkBypass(t *testing.T) {
+	rp := &RoutingProfile{ID: "t", Name: "t", Rules: []RuleItem{
+		{Name: "测试分组", GFW: true, Payload: []string{"DOMAIN-SUFFIX,example.com"}},
+	}}
+	_, _, rules := BuildConfig(rp, []string{"node-1"})
+
+	// Loopback + localhost domain + RFC1918/LAN segments must be direct,
+	// and they must appear before the MATCH catch-all so a fake-ip'd
+	// "localhost" subscription update is never sent to a remote node.
+	bypass := []string{
+		"IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
+		"IP-CIDR6,::1/128,DIRECT,no-resolve",
+		"DOMAIN,localhost,DIRECT",
+		"IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
+		"IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
+		"IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
+		"IP-CIDR,169.254.0.0/16,DIRECT,no-resolve",
+	}
+	matchIdx := -1
+	for i, r := range rules {
+		if len(r) >= 5 && r[:5] == "MATCH" {
+			matchIdx = i
+		}
+	}
+	if matchIdx < 0 {
+		t.Fatal("MATCH rule missing")
+	}
+	for i, want := range bypass {
+		assertContainsRule(t, rules, want)
+		idx := -1
+		for j, r := range rules {
+			if r == want {
+				idx = j
+				break
+			}
+		}
+		if idx > matchIdx {
+			t.Fatalf("bypass rule %q must come before MATCH", want)
+		}
+		_ = i
+	}
+}

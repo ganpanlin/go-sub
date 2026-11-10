@@ -9,12 +9,13 @@ import (
 
 // NodeResult holds the health check result for a single node.
 type NodeResult struct {
-	Name    string `json:"name"`
-	Server  string `json:"server"`
-	Port    int    `json:"port"`
-	Alive   bool   `json:"alive"`
-	Latency int64  `json:"latency"` // ms, -1 = timeout/error
-	Error   string `json:"error,omitempty"`
+	Name     string `json:"name"`
+	Server   string `json:"server"`
+	Port     int    `json:"port"`
+	Alive    bool   `json:"alive"`
+	Latency  int64  `json:"latency"` // ms, -1 = timeout/error
+	Error    string `json:"error,omitempty"`
+	TestType string `json:"test_type,omitempty"` // "tcp" (default) | "url" (real proxy round trip)
 }
 
 // CheckNode performs a TCP connect test against server:port.
@@ -22,22 +23,22 @@ type NodeResult struct {
 func CheckNode(name, server string, port int, timeout time.Duration) NodeResult {
 	if port <= 0 || port > 65535 {
 		return NodeResult{
-			Name:   name,
-			Server: server,
-			Port:   port,
-			Alive:  false,
+			Name:    name,
+			Server:  server,
+			Port:    port,
+			Alive:   false,
 			Latency: -1,
-			Error:  fmt.Sprintf("invalid port: %d", port),
+			Error:   fmt.Sprintf("invalid port: %d", port),
 		}
 	}
 	if server == "" {
 		return NodeResult{
-			Name:   name,
-			Server: server,
-			Port:   port,
-			Alive:  false,
+			Name:    name,
+			Server:  server,
+			Port:    port,
+			Alive:   false,
 			Latency: -1,
-			Error:  "empty server",
+			Error:   "empty server",
 		}
 	}
 

@@ -64,7 +64,7 @@ Vue.component('config-io', {
     },
     template: `
 <span>
-  <el-dialog title="导入配置" :visible.sync="importVisible" width="560px">
+  <el-dialog title="导入配置" :visible.sync="importVisible" width="560px" append-to-body>
     <el-form label-width="90px" size="small">
       <el-form-item label="选择文件">
         <input type="file" accept=".json" @change="handleImportFile" style="width:100%;" />

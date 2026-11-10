@@ -28,10 +28,10 @@ func ProfileStatsHandler(w http.ResponseWriter, r *http.Request) {
 	allStats := tracker.GetAllStats()
 
 	type profileStatEntry struct {
-		ID          string     `json:"id"`
-		Name        string     `json:"name"`
-		AccessCount int        `json:"access_count"`
-		LastAccess  *jsonTime  `json:"last_access,omitempty"`
+		ID          string    `json:"id"`
+		Name        string    `json:"name"`
+		AccessCount int       `json:"access_count"`
+		LastAccess  *jsonTime `json:"last_access,omitempty"`
 	}
 
 	profiles := rule.GetManager().GetAllProfiles()

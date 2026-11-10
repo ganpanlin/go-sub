@@ -35,7 +35,10 @@ type Profile struct {
 	// Source prefix: prepend source name to node names
 	SourcePrefix string `json:"source_prefix,omitempty"` // "off" | "name" | "domain" (default: off)
 	// Sort
-	SortBy string `json:"sort_by,omitempty"` // region|name|type|none (default: none)
+	SortBy string `json:"sort_by,omitempty"` // region|name|type|latency|none (default: none)
+	// Health-based filtering (uses persisted health check results, data/health-status.json)
+	MaxLatency int  `json:"max_latency,omitempty"` // ms; 0 = off. Drop checked nodes slower than this (dead nodes are always dropped when set)
+	DropDead   bool `json:"drop_dead,omitempty"`   // drop nodes whose last health check failed
 }
 
 // Manager manages profiles with thread-safe access.
@@ -166,6 +169,17 @@ func (m *Manager) UpdateProfile(id string, updates map[string]interface{}) (*Pro
 	}
 	if sp, ok := updates["source_prefix"].(string); ok {
 		p.SourcePrefix = sp
+	}
+	// max_latency arrives as float64 from JSON, int from in-process callers.
+	// Absent/null keeps the current value.
+	switch ml := updates["max_latency"].(type) {
+	case float64:
+		p.MaxLatency = int(ml)
+	case int:
+		p.MaxLatency = ml
+	}
+	if dd, ok := updates["drop_dead"].(bool); ok {
+		p.DropDead = dd
 	}
 	p.UpdatedAt = time.Now()
 	go m.Save()

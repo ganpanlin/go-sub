@@ -212,6 +212,7 @@ func SimulateHandler(w http.ResponseWriter, r *http.Request) {
 		"summary": map[string]interface{}{
 			"total_nodes":    result.TotalBefore,
 			"filtered_nodes": result.TotalAfter,
+			"health_dropped": result.HealthDropped,
 			"proxy_groups":   len(result.Groups),
 			"rule_providers": len(result.RuleProviders),
 			"rules":          len(result.Rules),

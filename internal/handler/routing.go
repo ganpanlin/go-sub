@@ -13,6 +13,41 @@ func RoutingCatalogHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(routing.GetCatalog())
 }
 
+// RoutingTemplatesHandler returns the built-in routing templates.
+func RoutingTemplatesHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(routing.GetTemplates())
+}
+
+// RoutingApplyTemplateHandler creates a new routing profile from a built-in template.
+//
+// POST /api/routing/apply-template
+//
+//	{ "template": "balanced", "name": "可选名称" }
+func RoutingApplyTemplateHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Template string `json:"template"`
+		Name     string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.Template == "" {
+		http.Error(w, "template is required", http.StatusBadRequest)
+		return
+	}
+	p, err := routing.GetManager().ApplyTemplate(req.Template, req.Name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cache.DeleteByPrefix("sub:")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(p)
+}
+
 // RoutingListHandler returns all routing profiles.
 func RoutingListHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

@@ -4,47 +4,354 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ProxyFilter 管理台</title>
+    <script>
+        // 深色模式提前应用，避免加载闪烁：localStorage 优先，否则跟随系统
+        (function () {
+            try {
+                var d = localStorage.getItem('pf_dark');
+                if (d === '1' || (d === null && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                    document.documentElement.classList.add('dark');
+                }
+            } catch (e) { }
+        })();
+    </script>
     <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif; margin: 0; padding: 20px; background: #f5f7fa; }
-        #app { max-width: 1400px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.1); }
-        .title-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
-        .hint { color: #909399; font-size: 12px; line-height: 1.6; }
-        .mono { font-family: Consolas, Monaco, monospace; }
+        /* ====== 设计令牌 ====== */
+        :root {
+            --pf-bg: #eef1f6;
+            --pf-surface: #ffffff;
+            --pf-border: #e4e9f0;
+            --pf-text: #1f2d3d;
+            --pf-text-sub: #6b7a90;
+            --pf-text-hint: #909399;
+            --pf-primary: #409eff;
+            --pf-primary-deep: #2b7de0;
+            --pf-radius: 10px;
+            --pf-radius-sm: 6px;
+            --pf-shadow-sm: 0 1px 3px rgba(16, 33, 61, .06);
+            --pf-shadow: 0 4px 20px rgba(16, 33, 61, .08);
+            --pf-shadow-lg: 0 12px 40px rgba(16, 33, 61, .14);
+        }
+
+        * { box-sizing: border-box; }
+
+        html, body { height: 100%; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            margin: 0;
+            padding: 24px 20px 40px;
+            background:
+                radial-gradient(1200px 400px at 15% -10%, rgba(64, 158, 255, .10), transparent 60%),
+                radial-gradient(1000px 400px at 90% -10%, rgba(103, 194, 58, .08), transparent 55%),
+                var(--pf-bg);
+            background-attachment: fixed;
+            color: var(--pf-text);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        #app {
+            max-width: 1440px;
+            margin: auto;
+            background: var(--pf-surface);
+            padding: 20px 24px 24px;
+            border: 1px solid var(--pf-border);
+            border-radius: 14px;
+            box-shadow: var(--pf-shadow);
+            animation: pf-enter .35s ease both;
+        }
+
+        @keyframes pf-enter {
+            from { opacity: 0; transform: translateY(8px); }
+            to   { opacity: 1; transform: none; }
+        }
+
+        /* ====== 滚动条 ====== */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #c9d3e0; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a9b6c7; }
+
+        /* ====== 品牌标题栏 ====== */
+        .title-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            padding: 4px 4px 16px;
+            margin-bottom: 8px;
+            border-bottom: 1px solid var(--pf-border);
+        }
+
+        .brand { display: flex; align-items: center; gap: 12px; }
+
+        .brand-icon {
+            width: 42px; height: 42px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #409eff 0%, #6c5ce7 100%);
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; font-size: 22px;
+            box-shadow: 0 4px 12px rgba(64, 158, 255, .35);
+            flex-shrink: 0;
+        }
+
+        .brand h1 {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: .2px;
+            color: var(--pf-text);
+            line-height: 1.2;
+        }
+
+        .brand-sub {
+            margin-top: 2px;
+            font-size: 12px;
+            color: var(--pf-text-sub);
+        }
+
+        .brand-sub .ver {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 0 6px;
+            border-radius: 999px;
+            background: #edf3fb;
+            color: var(--pf-primary-deep);
+            font-size: 11px;
+            line-height: 18px;
+            font-family: Consolas, Monaco, monospace;
+        }
+
+        /* ====== 工具栏按钮分组 ====== */
+        .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .toolbar .divider { width: 1px; height: 18px; background: var(--pf-border); margin: 0 4px; }
+
+        /* ====== Tab 精修 ====== */
+        .el-tabs__nav-wrap::after { height: 1px; background: var(--pf-border); }
+        .el-tabs__item {
+            font-size: 14px;
+            color: var(--pf-text-sub);
+            transition: color .2s;
+        }
+        .el-tabs__item.is-active { color: var(--pf-primary-deep); font-weight: 600; }
+        .el-tabs__item:hover { color: var(--pf-primary-deep); }
+        .el-tabs__active-bar { height: 3px; border-radius: 3px; background: linear-gradient(90deg, #409eff, #6c5ce7); }
+        .el-tabs__content { padding-top: 14px; }
+
+        /* ====== 表格精修 ====== */
+        .el-table { border-radius: var(--pf-radius); overflow: hidden; }
+        .el-table th.el-table__cell {
+            background: #f7f9fc;
+            color: #4e5d70;
+            font-weight: 600;
+        }
+        .el-table td.el-table__cell, .el-table th.el-table__cell.is-leaf { border-bottom: 1px solid #eef2f7; }
+        .el-table--border, .el-table--group { border-color: var(--pf-border); }
+        .el-table::before { display: none; }
+        .el-table .invalid-row { background: #fef4f4; }
+        .el-table .el-table__row { transition: background-color .15s; }
+
+        /* ====== 按钮精修 ====== */
+        .el-button { border-radius: var(--pf-radius-sm); font-weight: 500; }
+        .el-button--primary { box-shadow: 0 2px 6px rgba(64, 158, 255, .28); }
+        .el-button--primary:hover { box-shadow: 0 3px 10px rgba(64, 158, 255, .4); }
+        .el-button.is-circle { box-shadow: none; }
+
+        /* ====== 对话框精修 ====== */
+        .el-dialog {
+            border-radius: 14px;
+            box-shadow: var(--pf-shadow-lg);
+            overflow: hidden;
+        }
+        .el-dialog__header {
+            padding: 16px 22px;
+            border-bottom: 1px solid var(--pf-border);
+            background: #fbfcfe;
+        }
+        .el-dialog__title { font-size: 16px; font-weight: 600; color: var(--pf-text); }
+        .el-dialog__body { padding: 18px 22px; }
+        .el-dialog__footer { padding: 12px 22px 18px; border-top: 1px solid #f0f3f8; }
+
+        /* ====== 登录/初始化全屏卡片 ====== */
+        .pf-auth { margin-top: 14vh !important; max-width: 92vw; }
+        .pf-auth .el-dialog__header { display: none; }
+        .pf-auth .el-dialog__body { padding: 30px 30px 22px; }
+        .pf-auth .el-dialog__footer { padding: 6px 30px 26px; border-top: none; }
+        .pf-auth .el-dialog__footer .el-button { width: 100%; }
+
+        .auth-brand { text-align: center; margin-bottom: 20px; }
+        .auth-logo {
+            width: 54px; height: 54px;
+            margin: 0 auto 12px;
+            border-radius: 15px;
+            background: linear-gradient(135deg, #409eff 0%, #6c5ce7 100%);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 28px; color: #fff;
+            box-shadow: 0 6px 16px rgba(64, 158, 255, .35);
+        }
+        .auth-title { font-size: 19px; font-weight: 700; color: var(--pf-text); letter-spacing: .3px; }
+        .auth-sub { font-size: 12px; color: var(--pf-text-hint); margin-top: 4px; }
+
+        /* ====== 空状态 ====== */
+        .pf-empty { padding: 36px 0 32px; text-align: center; color: var(--pf-text-hint); }
+        .pf-empty .pf-empty-icon { font-size: 42px; color: #c3ccdb; line-height: 1; }
+        .pf-empty p { margin: 10px 0 3px; font-size: 14px; color: var(--pf-text-sub); font-weight: 500; }
+        .pf-empty .hint { font-size: 12px; }
+
+        /* ====== 通用文本与元素 ====== */
+        .hint { color: var(--pf-text-hint); font-size: 12px; line-height: 1.6; }
+        .mono { font-family: Consolas, Monaco, 'Courier New', monospace; }
         .script-box textarea { font-family: Consolas, Monaco, monospace; font-size: 13px; }
-        .sub-url { word-break: break-all; font-family: Consolas, Monaco, monospace; font-size: 12px; }
+        .sub-url { word-break: break-all; font-family: Consolas, Monaco, monospace; font-size: 12px; color: #47536b; }
         .rule-tag { margin: 2px; }
         .rule-edit-form .el-form-item { margin-bottom: 10px; }
+
         .el-table .cell { display: flex; align-items: center; flex-wrap: nowrap; }
         .op-cell .el-button { margin-left: 0 !important; margin-right: 4px; }
         .op-cell .el-button:last-child { margin-right: 0; }
+
+        .el-tag { border-radius: 4px; font-weight: 500; }
+        .el-descriptions__header { margin-bottom: 10px; }
+
         .el-transfer { display: flex; justify-content: center; }
         .el-transfer-panel { width: 45%; }
         .el-transfer-panel__body { height: 260px; }
         .el-transfer-panel__list { height: 210px; }
+
+        .el-collapse-item__header { font-weight: 500; }
+        .el-dialog .el-alert { border-radius: var(--pf-radius-sm); }
+
+        /* 输入控件圆角统一 */
+        .el-input__inner, .el-textarea__inner { border-radius: var(--pf-radius-sm); }
+        .el-input-number__decrease, .el-input-number__increase { border-radius: 0; }
+
+        /* ====== 深色模式 ====== */
+        html.dark {
+            --pf-bg: #0f131b;
+            --pf-surface: #171d28;
+            --pf-border: #2a3345;
+            --pf-text: #d7dde8;
+            --pf-text-sub: #93a0b4;
+            --pf-text-hint: #6e7a8e;
+            --pf-shadow-sm: 0 1px 3px rgba(0, 0, 0, .4);
+            --pf-shadow: 0 4px 20px rgba(0, 0, 0, .45);
+            --pf-shadow-lg: 0 12px 40px rgba(0, 0, 0, .55);
+            color-scheme: dark;
+        }
+        html.dark body {
+            background:
+                radial-gradient(1200px 400px at 15% -10%, rgba(64, 158, 255, .08), transparent 60%),
+                radial-gradient(1000px 400px at 90% -10%, rgba(108, 92, 231, .08), transparent 55%),
+                var(--pf-bg);
+        }
+        html.dark ::-webkit-scrollbar-thumb { background: #39445a; }
+        html.dark ::-webkit-scrollbar-thumb:hover { background: #4c5a75; }
+        html.dark .brand-sub .ver { background: #1d2c42; color: #6fb3ff; }
+        html.dark .pf-empty .pf-empty-icon { color: #39445a; }
+
+        /* Element UI 深色覆盖 */
+        html.dark .el-table { background: transparent; color: var(--pf-text); }
+        html.dark .el-table tr, html.dark .el-table th.el-table__cell.is-leaf { background: transparent; }
+        html.dark .el-table th.el-table__cell { background: #1d2534; color: #a7b3c7; }
+        html.dark .el-table td.el-table__cell, html.dark .el-table th.el-table__cell.is-leaf { border-bottom: 1px solid #232c3d; }
+        html.dark .el-table--border::after, html.dark .el-table--group::after, html.dark .el-table::before { background-color: var(--pf-border); }
+        html.dark .el-table--enable-row-hover .el-table__body tr:hover > td.el-table__cell { background: #1e2636; }
+        html.dark .el-table .invalid-row { background: rgba(245, 108, 108, .12); }
+        html.dark .el-table__empty-block { color: var(--pf-text-hint); }
+
+        html.dark .el-dialog { background: var(--pf-surface); }
+        html.dark .el-dialog__header { background: #1b2230; border-bottom-color: var(--pf-border); }
+        html.dark .el-dialog__title { color: var(--pf-text); }
+        html.dark .el-dialog__footer { border-top-color: #212a3a; }
+        html.dark .el-dialog__headerbtn .el-dialog__close { color: var(--pf-text-sub); }
+
+        html.dark .el-input__inner, html.dark .el-textarea__inner { background: #1d2534; border-color: #2a3345; color: var(--pf-text); }
+        html.dark .el-input__inner::placeholder, html.dark .el-textarea__inner::placeholder { color: #5c6980; }
+        html.dark .el-input__inner:hover, html.dark .el-textarea__inner:hover { border-color: #3a4560; }
+        html.dark .el-input.is-disabled .el-input__inner, html.dark .el-textarea.is-disabled .el-textarea__inner { background: #161c27; border-color: #232c3d; color: #69748a; }
+
+        html.dark .el-button--default { background: #1d2534; border-color: #2a3345; color: var(--pf-text); }
+        html.dark .el-button--default:hover, html.dark .el-button--default:focus { background: #232c3d; border-color: #3a4560; color: #e8eef8; }
+
+        html.dark .el-tabs__nav-wrap::after { background: var(--pf-border); }
+        html.dark .el-collapse-item__header, html.dark .el-collapse-item__wrap { background: transparent; color: var(--pf-text); border-color: #232c3d; }
+
+        html.dark .el-form-item__label { color: var(--pf-text-sub); }
+        html.dark .el-checkbox__label, html.dark .el-radio__label { color: var(--pf-text); }
+        html.dark .el-checkbox__input.is-disabled + .el-checkbox__label { color: #5c6980; }
+
+        html.dark .el-descriptions-item__label, html.dark .el-descriptions-item__content { background: transparent; border-color: #232c3d; color: var(--pf-text); }
+        html.dark .el-descriptions-item__label { color: #a7b3c7; }
+        html.dark .el-descriptions__body { background: transparent; }
+        html.dark .el-descriptions--border .el-descriptions-item__cell { border-color: #232c3d; }
+
+        html.dark .el-switch__core { border-color: #2a3345; background: #2a3345; }
+
+        html.dark .el-tag--info { background: #232c3d; border-color: #2a3345; color: #a7b3c7; }
+        html.dark .sub-url { color: #8fa3c4; }
+
+        /* 挂在 body 下的浮层 */
+        html.dark .el-select-dropdown, html.dark .el-message-box, html.dark .el-dropdown-menu,
+        html.dark .el-popover, html.dark .el-message, html.dark .el-picker-panel { background: #1c2330; border-color: #2a3345; }
+        html.dark .el-select-dropdown__item { color: var(--pf-text); }
+        html.dark .el-select-dropdown__item.hover, html.dark .el-select-dropdown__item:hover { background: #26304a; }
+        html.dark .el-select-dropdown__item.selected { color: #5ea0ef; }
+        html.dark .el-message-box__title, html.dark .el-message-box__content, html.dark .el-message__content { color: var(--pf-text); }
+        html.dark .el-tooltip__popper.is-light { background: #26304a; border-color: #3a4560; color: var(--pf-text); }
+        html.dark .el-loading-mask { background-color: rgba(15, 19, 27, .72); }
+
+        html.dark .el-transfer-panel { background: #1c2330; border-color: #2a3345; }
+        html.dark .el-transfer-panel__header { background: #1d2534; color: var(--pf-text); border-bottom-color: #232c3d; }
+        html.dark .el-transfer-panel__body, html.dark .el-transfer-panel__footer { background: #1c2330; border-color: #232c3d; }
+        html.dark .el-transfer-panel .el-transfer-panel__header .el-checkbox__label { color: var(--pf-text); }
+
+        html.dark .el-alert--info { background: #1d2534; }
+        html.dark .el-alert--error { background: rgba(245, 108, 108, .12); }
+        html.dark .el-alert--warning { background: rgba(230, 162, 60, .12); }
+        html.dark .el-alert--success { background: rgba(103, 194, 58, .12); }
+
+        /* ====== 响应式 ====== */
+        @media (max-width: 768px) {
+            body { padding: 12px 8px 24px; }
+            #app { padding: 14px 14px 18px; border-radius: 10px; }
+            .title-bar { padding-bottom: 12px; }
+            .brand-icon { width: 36px; height: 36px; font-size: 18px; }
+            .brand h1 { font-size: 17px; }
+        }
     </style>
 </head>
 <body>
 <div id="app">
 
     <!-- ====== 初始化设置 ====== -->
-    <el-dialog title="初始化管理员" :visible.sync="setupVisible" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false" width="420px">
-        <div style="margin-bottom:16px;color:#606266;font-size:14px;">欢迎使用 ProxyFilter！请创建管理员账户。</div>
+    <el-dialog :visible.sync="setupVisible" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false" custom-class="pf-auth" width="400px" top="14vh">
+        <div class="auth-brand">
+            <div class="auth-logo">⚡</div>
+            <div class="auth-title">欢迎使用 ProxyFilter</div>
+            <div class="auth-sub">首次使用，请创建管理员账户</div>
+        </div>
         <el-form label-width="90px" size="small">
-            <el-form-item label="用户名"><el-input v-model="setupForm.username" placeholder="默认 admin"></el-input></el-form-item>
-            <el-form-item label="密码" required><el-input v-model="setupForm.password" type="password" placeholder="至少6位" show-password></el-input></el-form-item>
-            <el-form-item label="确认密码" required><el-input v-model="setupForm.password2" type="password" placeholder="再次输入" show-password></el-input></el-form-item>
+            <el-form-item label="用户名"><el-input v-model="setupForm.username" placeholder="默认 admin" prefix-icon="el-icon-user"></el-input></el-form-item>
+            <el-form-item label="密码" required><el-input v-model="setupForm.password" type="password" placeholder="至少6位" show-password prefix-icon="el-icon-lock"></el-input></el-form-item>
+            <el-form-item label="确认密码" required><el-input v-model="setupForm.password2" type="password" placeholder="再次输入" show-password prefix-icon="el-icon-lock"></el-input></el-form-item>
         </el-form>
         <span slot="footer"><el-button type="primary" @click="doSetup">创建并登录</el-button></span>
     </el-dialog>
 
     <!-- ====== 登录 ====== -->
-    <el-dialog title="管理员登录" :visible.sync="loginVisible" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false" width="380px">
+    <el-dialog :visible.sync="loginVisible" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false" custom-class="pf-auth" width="400px" top="14vh">
+        <div class="auth-brand">
+            <div class="auth-logo">⚡</div>
+            <div class="auth-title">ProxyFilter</div>
+            <div class="auth-sub">代理订阅聚合管理台</div>
+        </div>
         <el-form @keyup.enter.native="login" label-width="70px" size="small">
-            <el-form-item label="用户名"><el-input v-model="loginForm.username" autocomplete="username"></el-input></el-form-item>
-            <el-form-item label="密码"><el-input v-model="loginForm.password" type="password" autocomplete="current-password" show-password></el-input></el-form-item>
+            <el-form-item label="用户名"><el-input v-model="loginForm.username" autocomplete="username" prefix-icon="el-icon-user"></el-input></el-form-item>
+            <el-form-item label="密码"><el-input v-model="loginForm.password" type="password" autocomplete="current-password" show-password prefix-icon="el-icon-lock"></el-input></el-form-item>
         </el-form>
-        <span slot="footer"><el-button type="primary" @click="login">登录</el-button></span>
+        <span slot="footer"><el-button type="primary" @click="login">登 录</el-button></span>
     </el-dialog>
 
     <!-- ====== 修改密码 ====== -->
@@ -62,19 +369,25 @@
 
     <!-- ====== 标题栏 ====== -->
     <div class="title-bar">
-        <h1 style="margin:0">
-            ProxyFilter
-            <span v-if="versionInfo.version" class="hint" style="font-weight:400;margin-left:8px;">v{{ versionInfo.version }}</span>
-        </h1>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <el-button @click="fetchAll" :loading="loading" size="small">刷新</el-button>
+        <div class="brand">
+            <div class="brand-icon">⚡</div>
+            <div>
+                <h1>ProxyFilter</h1>
+                <div class="brand-sub">代理订阅聚合管理台<span v-if="versionInfo.version" class="ver">v{{ versionInfo.version }}</span></div>
+            </div>
+        </div>
+        <div class="toolbar">
+            <el-button @click="fetchAll" :loading="loading" size="small" icon="el-icon-refresh">刷新</el-button>
             <el-button type="warning" @click="$refs.sourceList.refreshSourceCache()" :loading="refreshingSources" size="small" v-if="activeTab==='sources'">全量刷新缓存</el-button>
-            <el-button type="success" size="small" @click="$refs.sourceList.openAddSourceDialog()" v-if="activeTab==='sources'">添加订阅源</el-button>
-            <el-button type="primary" size="small" @click="$refs.profileList.openProfileDialog()" v-if="activeTab==='profiles'">新建聚合订阅</el-button>
+            <el-button type="success" size="small" @click="$refs.sourceList.openAddSourceDialog()" v-if="activeTab==='sources'" icon="el-icon-plus">添加订阅源</el-button>
+            <el-button type="primary" size="small" @click="$refs.profileList.openProfileDialog()" v-if="activeTab==='profiles'" icon="el-icon-plus">新建聚合订阅</el-button>
+            <span class="divider"></span>
             <el-button size="small" @click="$refs.configIo.exportConfig()" icon="el-icon-download">导出</el-button>
             <el-button size="small" @click="$refs.configIo.openImportDialog()" icon="el-icon-upload2">导入</el-button>
-            <el-button size="small" @click="changePwdVisible=true" v-if="authEnabled && !needsSetup">修改密码</el-button>
-            <el-button size="small" @click="doLogout" v-if="authEnabled">退出</el-button>
+            <span class="divider"></span>
+            <el-button size="small" @click="changePwdVisible=true" v-if="authEnabled && !needsSetup" icon="el-icon-lock">修改密码</el-button>
+            <el-button size="small" @click="toggleDark" :icon="darkMode ? 'el-icon-sunny' : 'el-icon-moon'" :title="darkMode ? '切换浅色模式' : '切换深色模式'"></el-button>
+            <el-button size="small" @click="doLogout" v-if="authEnabled" icon="el-icon-switch-button">退出</el-button>
         </div>
     </div>
 
@@ -102,11 +415,11 @@
 <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
 
 <!-- 应用代码（按依赖顺序加载） -->
-<script src="api.js"></script>
-<script src="components/source-list.js"></script>
-<script src="components/profile-list.js"></script>
-<script src="components/routing.js"></script>
-<script src="components/config-io.js"></script>
-<script src="app.js"></script>
+<script src="api.js?v=20261111"></script>
+<script src="components/source-list.js?v=20261111"></script>
+<script src="components/profile-list.js?v=20261111"></script>
+<script src="components/routing.js?v=20261111"></script>
+<script src="components/config-io.js?v=20261111"></script>
+<script src="app.js?v=20261111"></script>
 </body>
 </html>

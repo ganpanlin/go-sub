@@ -15,10 +15,10 @@ import (
 )
 
 type Config struct {
-	Enabled   bool   `json:"enabled"`
-	Username  string `json:"username"`
+	Enabled      bool   `json:"enabled"`
+	Username     string `json:"username"`
 	PasswordHash string `json:"password_hash"`
-	JWTSecret string `json:"jwt_secret"`
+	JWTSecret    string `json:"jwt_secret"`
 }
 
 var (
@@ -134,10 +134,16 @@ func IsAuthenticated(r *http.Request) bool {
 		return false
 	}
 	valid := ValidateJWT(token)
-	if !valid {
-		slog.Warn("JWT validation failed", "path", r.URL.Path, "token_prefix", token[:20])
+	if valid {
+		return true
 	}
-	return valid
+	// Log only a bounded prefix — a malformed short token must not panic.
+	prefix := token
+	if len(prefix) > 20 {
+		prefix = prefix[:20]
+	}
+	slog.Warn("JWT validation failed", "path", r.URL.Path, "token_prefix", prefix)
+	return false
 }
 
 func Middleware(next http.Handler) http.Handler {

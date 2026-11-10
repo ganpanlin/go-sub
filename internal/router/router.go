@@ -12,8 +12,8 @@ import (
 
 // rate limiters: subscription endpoints (10 req/s), API endpoints (30 req/s)
 var (
-	subLimiter  = middleware.NewLimiterStore(10, 20)
-	apiLimiter  = middleware.NewLimiterStore(30, 60)
+	subLimiter = middleware.NewLimiterStore(10, 20)
+	apiLimiter = middleware.NewLimiterStore(30, 60)
 )
 
 func NewRouter() *mux.Router {
@@ -54,6 +54,8 @@ func NewRouter() *mux.Router {
 	api.HandleFunc("/routing", handler.RoutingUpdateHandler).Methods("PUT")
 	api.HandleFunc("/routing", handler.RoutingDeleteHandler).Methods("DELETE")
 	api.HandleFunc("/routing/catalog", handler.RoutingCatalogHandler).Methods("GET")
+	api.HandleFunc("/routing/templates", handler.RoutingTemplatesHandler).Methods("GET")
+	api.HandleFunc("/routing/apply-template", handler.RoutingApplyTemplateHandler).Methods("POST")
 
 	// Custom RuleSet CRUD
 	api.HandleFunc("/rulesets", handler.RuleSetListHandler).Methods("GET")

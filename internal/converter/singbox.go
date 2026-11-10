@@ -21,7 +21,7 @@ func (c *SingboxConverter) Convert(proxies []map[string]interface{}, groups []in
 	// Build sing-box config
 	config := map[string]interface{}{
 		"log": map[string]interface{}{
-			"level":  "info",
+			"level":     "info",
 			"timestamp": true,
 		},
 		"dns": map[string]interface{}{
@@ -132,10 +132,10 @@ func toSingboxOutbound(p map[string]interface{}) map[string]interface{} {
 	port := intField(p, "port")
 
 	base := map[string]interface{}{
-		"type":     proxyType,
-		"tag":      name,
-		"server":   server,
-		"port":     port,
+		"type":   proxyType,
+		"tag":    name,
+		"server": server,
+		"port":   port,
 	}
 
 	switch proxyType {
@@ -163,17 +163,17 @@ func toSingboxOutbound(p map[string]interface{}) map[string]interface{} {
 		// Reality
 		if realityOpts := mapField(p, "reality-opts"); realityOpts != nil {
 			tls := map[string]interface{}{
-				"enabled":    true,
+				"enabled":     true,
 				"server_name": strField(p, "servername"),
 				"reality": map[string]interface{}{
-					"enabled":   true,
+					"enabled":    true,
 					"public_key": fmt.Sprintf("%v", realityOpts["public-key"]),
 					"short_id":   fmt.Sprintf("%v", realityOpts["short-id"]),
 				},
 			}
 			if fp := strField(p, "client-fingerprint"); fp != "" {
 				tls["utls"] = map[string]interface{}{
-					"enabled": true,
+					"enabled":     true,
 					"fingerprint": fp,
 				}
 			}
@@ -189,7 +189,7 @@ func toSingboxOutbound(p map[string]interface{}) map[string]interface{} {
 		base["password"] = strField(p, "password")
 		if sni := strField(p, "sni"); sni != "" {
 			base["tls"] = map[string]interface{}{
-				"enabled":    true,
+				"enabled":     true,
 				"server_name": sni,
 				"insecure":    boolField(p, "skip-cert-verify"),
 			}
@@ -242,7 +242,7 @@ func addSingboxTransport(base, p map[string]interface{}) {
 			}
 		}
 		base["transport"] = map[string]interface{}{
-			"type": "ws",
+			"type":       "ws",
 			"ws_options": wsOpts,
 		}
 	case "grpc":
@@ -253,7 +253,7 @@ func addSingboxTransport(base, p map[string]interface{}) {
 			grpcOpts["service_name"] = sn
 		}
 		base["transport"] = map[string]interface{}{
-			"type": "grpc",
+			"type":         "grpc",
 			"grpc_options": grpcOpts,
 		}
 	}

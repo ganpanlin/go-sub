@@ -3,10 +3,13 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"go-sub/internal/healthcheck"
 	"go-sub/internal/provider"
 	"go-sub/internal/routing"
 	"go-sub/internal/rule"
 	"go-sub/internal/source"
+	"math"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -29,6 +32,7 @@ type Result struct {
 	Sources       []SourceInfo
 	TotalBefore   int // nodes after dedup, before filter
 	TotalAfter    int // nodes after filter
+	HealthDropped int // nodes removed by health-based filtering (dead / over max latency)
 }
 
 // Run fetches all sources for a profile, deduplicates, filters, and builds routing config.
@@ -113,12 +117,21 @@ func RunCtx(ctx context.Context, profile *rule.Profile) (*Result, error) {
 	mergedProxies = validate(mergedProxies)
 	totalBefore := len(mergedProxies)
 
+	// 3.5 Health-based filtering: drop dead nodes and nodes over the latency threshold
+	// based on the last persisted health check (see /api/health-check).
+	mergedProxies, healthDropped := applyHealthFilter(mergedProxies, profile)
+
 	// 4. Apply profile rule engine (filter, rename, sort, etc.)
 	engine, err := rule.NewEngine(profile)
 	if err != nil {
 		return nil, fmt.Errorf("rule engine error: %w", err)
 	}
 	filteredProxies := engine.Process(mergedProxies)
+
+	// 4.5 Latency sort: fastest first, then unchecked, then dead (rule engine ignores "latency")
+	if profile.SortBy == "latency" {
+		sortByLatency(filteredProxies)
+	}
 
 	// 5. Apply source prefix
 	if profile.SourcePrefix != "" && profile.SourcePrefix != "off" {
@@ -171,7 +184,80 @@ func RunCtx(ctx context.Context, profile *rule.Profile) (*Result, error) {
 		Sources:       sources,
 		TotalBefore:   totalBefore,
 		TotalAfter:    len(proxyMaps),
+		HealthDropped: healthDropped,
 	}, nil
+}
+
+// applyHealthFilter drops nodes based on persisted health check results.
+// Nodes without any recorded status are kept (conservative: never-checked nodes stay).
+// When MaxLatency is set, dead nodes are dropped too (unreachable is worse than slow).
+func applyHealthFilter(proxies []interface{}, profile *rule.Profile) (filtered []interface{}, dropped int) {
+	if profile.MaxLatency <= 0 && !profile.DropDead {
+		return proxies, 0
+	}
+	filtered = make([]interface{}, 0, len(proxies))
+	for _, p := range proxies {
+		m, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		st, found := healthcheck.GetStatus(fmt.Sprintf("%v", m["server"]), toInt(m["port"]))
+		if !found {
+			filtered = append(filtered, p)
+			continue
+		}
+		if !st.Alive {
+			dropped++
+			continue
+		}
+		if profile.MaxLatency > 0 && st.Latency > int64(profile.MaxLatency) {
+			dropped++
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	return filtered, dropped
+}
+
+// sortByLatency orders nodes: alive by latency ascending, then unchecked, then dead.
+func sortByLatency(proxies []interface{}) {
+	sort.SliceStable(proxies, func(i, j int) bool {
+		return latencyRank(proxies[i]) < latencyRank(proxies[j])
+	})
+}
+
+// latencyRank returns the sort key for a proxy: alive latency (ms),
+// unchecked = MaxInt64-1, dead = MaxInt64.
+func latencyRank(p interface{}) int64 {
+	m, ok := p.(map[string]interface{})
+	if !ok {
+		return math.MaxInt64
+	}
+	st, found := healthcheck.GetStatus(fmt.Sprintf("%v", m["server"]), toInt(m["port"]))
+	if !found {
+		return math.MaxInt64 - 1
+	}
+	if !st.Alive {
+		return math.MaxInt64
+	}
+	if st.Latency < 0 {
+		return math.MaxInt64
+	}
+	return st.Latency
+}
+
+func toInt(v interface{}) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
+	case string:
+		var out int
+		fmt.Sscanf(n, "%d", &out)
+		return out
+	}
+	return 0
 }
 
 // --- internal helpers ---

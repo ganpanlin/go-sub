@@ -18,6 +18,10 @@ Vue.component('profile-list', {
             hcResults: [],
             hcProfile: null,
             hcDuration: 0,
+            hcFilterLatency: 300,
+            hcApplying: false,
+            hcMode: '',
+            hcTestURL: '',
             // Access stats
             profileStats: []
         };
@@ -60,7 +64,8 @@ Vue.component('profile-list', {
             var p = row ? JSON.parse(JSON.stringify(row)) : {
                 name: '', enabled: true, sources: [], routing_id: '',
                 include: '', exclude: '公告|套餐|到期', type_filter: '', server_filter: '',
-                rename_pattern: '{code}_{tag}', sort_by: 'region', script: '', overrides: null, source_prefix: 'name'
+                rename_pattern: '{code}_{tag}', sort_by: 'region', script: '', overrides: null, source_prefix: 'name',
+                max_latency: 0, drop_dead: false
             };
             p.sources = this.normalizeProfileSources(p.sources || []);
             p.overridesText = p.overrides ? JSON.stringify(p.overrides, null, 2) : '';
@@ -138,13 +143,26 @@ Vue.component('profile-list', {
             this.hcProfile = row;
             this.hcResults = [];
             this.hcDialogVisible = true;
+            this.hcLoading = false;
+            this.hcDuration = 0;
+            this.hcMode = ''; // idle: let the user pick a mode first
+        },
+        runHealthCheck: function (mode) {
+            if (!this.hcProfile) return;
+            this.hcMode = mode;
             this.hcLoading = true;
+            this.hcResults = [];
             this.hcDuration = 0;
             var self = this;
-            axios.post('/api/health-check', { profile_id: row.id }).then(function (r) {
+            axios.post('/api/health-check', {
+                profile_id: this.hcProfile.id,
+                mode: mode,
+                timeout: mode === 'url' ? 5 : 3
+            }).then(function (r) {
                 var d = r.data || {};
                 self.hcResults = d.results || [];
                 self.hcDuration = d.duration_ms || 0;
+                if (mode === 'url' && d.url) self.hcTestURL = d.url;
             }).catch(function (e) {
                 self.$message.error('健康检测失败: ' + apiErrorMessage(e));
             }).finally(function () { self.hcLoading = false; });
@@ -153,6 +171,24 @@ Vue.component('profile-list', {
             if (!r.alive) return 'danger';
             if (r.latency > 800) return 'warning';
             return 'success';
+        },
+        hcKeptCount: function () {
+            var max = this.hcFilterLatency || 0;
+            return this.hcResults.filter(function (r) { return r.alive && (!max || r.latency <= max); }).length;
+        },
+        applyLatencyFilter: function () {
+            if (!this.hcProfile) return;
+            var self = this;
+            this.hcApplying = true;
+            axios.put('/api/profiles?id=' + this.hcProfile.id, {
+                max_latency: this.hcFilterLatency || 0,
+                drop_dead: true
+            }).then(function () {
+                self.$message.success('已应用延迟过滤到「' + self.hcProfile.name + '」，订阅输出将自动剔除高延迟/离线节点');
+                self.fetchProfiles();
+            }).catch(function (e) {
+                self.$message.error('应用失败: ' + apiErrorMessage(e));
+            }).finally(function () { self.hcApplying = false; });
         },
 
         // --- Transfer filter ---
@@ -211,10 +247,13 @@ Vue.component('profile-list', {
         <el-tooltip content="删除"><el-button size="mini" type="danger" icon="el-icon-delete" circle @click="deleteProfile(scope.row.id)"></el-button></el-tooltip>
       </template>
     </el-table-column>
+    <template slot="empty">
+      <div class="pf-empty"><i class="el-icon-connection pf-empty-icon"></i><p>暂无聚合订阅</p><div class="hint">点击右上角「新建聚合订阅」创建</div></div>
+    </template>
   </el-table>
 
   <!-- 聚合订阅编辑对话框 -->
-  <el-dialog :title="profileForm.id ? '编辑聚合订阅' : '新建聚合订阅'" :visible.sync="profileDialogVisible" width="920px" top="5vh">
+  <el-dialog :title="profileForm.id ? '编辑聚合订阅' : '新建聚合订阅'" :visible.sync="profileDialogVisible" width="920px" top="5vh" append-to-body>
     <el-form label-width="110px" size="small">
       <el-form-item label="启用"><el-switch v-model="profileForm.enabled"></el-switch></el-form-item>
       <el-form-item label="名称" required><el-input v-model="profileForm.name" placeholder="例如：HK + JP 优选"></el-input></el-form-item>
@@ -246,11 +285,19 @@ Vue.component('profile-list', {
         <el-col :span="8">
           <el-form-item label="排序">
             <el-select v-model="profileForm.sort_by" clearable style="width:100%">
-              <el-option label="不排序" value=""></el-option><el-option label="按区域" value="region"></el-option><el-option label="按名称" value="name"></el-option><el-option label="按类型" value="type"></el-option>
+              <el-option label="不排序" value=""></el-option><el-option label="按区域" value="region"></el-option><el-option label="按名称" value="name"></el-option><el-option label="按类型" value="type"></el-option><el-option label="按延迟" value="latency"></el-option>
             </el-select>
           </el-form-item>
         </el-col>
       </el-row>
+      <el-form-item label="延迟过滤">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <el-input-number v-model="profileForm.max_latency" :min="0" :step="100" size="small" style="width:150px;"></el-input-number>
+          <span class="hint">ms（超过此延迟剔除，0 = 不启用）</span>
+          <el-switch v-model="profileForm.drop_dead" active-text="剔除离线节点"></el-switch>
+        </div>
+        <div class="hint">基于「健康检测」结果（TCP 快速检测或真实延迟测速）；未检测过的节点会保留。启用延迟阈值时，检测不通的节点也会被剔除。</div>
+      </el-form-item>
       <el-row :gutter="12">
         <el-col :span="12">
           <el-form-item label="节点名前缀">
@@ -275,7 +322,7 @@ Vue.component('profile-list', {
   </el-dialog>
 
   <!-- 模拟预览对话框 -->
-  <el-dialog title="模拟预览" :visible.sync="simDialogVisible" width="960px" top="3vh">
+  <el-dialog title="模拟预览" :visible.sync="simDialogVisible" width="960px" top="3vh" append-to-body>
     <div v-if="simLoading" style="text-align:center;padding:40px;"><i class="el-icon-loading"></i> 正在生成配置...</div>
     <div v-else-if="simResult">
       <el-alert v-if="simResult.errors && simResult.errors.length" type="error" :closable="false" style="margin-bottom:12px;"><div v-for="e in simResult.errors" :key="e">❌ {{ e }}</div></el-alert>
@@ -285,6 +332,7 @@ Vue.component('profile-list', {
         <el-descriptions-item label="节点">{{ simResult.summary.total_nodes }} → {{ simResult.summary.filtered_nodes }}</el-descriptions-item>
         <el-descriptions-item label="策略组">{{ simResult.summary.proxy_groups }}</el-descriptions-item>
         <el-descriptions-item label="规则">{{ simResult.summary.rules }} ({{ simResult.summary.rule_providers }} 远程)</el-descriptions-item>
+        <el-descriptions-item v-if="simResult.summary.health_dropped" label="健康剔除">{{ simResult.summary.health_dropped }} 个（离线/高延迟）</el-descriptions-item>
       </el-descriptions>
       <div v-if="simResult.sources && simResult.sources.length" style="margin-bottom:8px;">
         <strong>源：</strong>
@@ -299,15 +347,49 @@ Vue.component('profile-list', {
   </el-dialog>
 
   <!-- 健康检测对话框 -->
-  <el-dialog :title="'健康检测 - ' + (hcProfile ? hcProfile.name : '')" :visible.sync="hcDialogVisible" width="900px" top="5vh">
-    <div v-if="hcLoading" style="text-align:center;padding:40px;"><i class="el-icon-loading"></i> 正在检测节点连通性...</div>
+  <el-dialog :title="'健康检测 - ' + (hcProfile ? hcProfile.name : '')" :visible.sync="hcDialogVisible" width="900px" top="5vh" append-to-body>
+    <!-- 模式选择 -->
+    <div v-if="!hcMode" style="padding:10px 0 20px;">
+      <div style="margin-bottom:14px;color:#606266;">选择检测方式：</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        <div @click="runHealthCheck('tcp')" style="flex:1;min-width:260px;border:1px solid #dcdfe6;border-radius:8px;padding:16px;cursor:pointer;transition:all .2s;" onmouseover="this.style.borderColor='#409eff'" onmouseout="this.style.borderColor='#dcdfe6'">
+          <div style="font-weight:600;font-size:15px;margin-bottom:6px;">⚡ TCP 快速检测</div>
+          <div class="hint">仅测试到节点服务器的 TCP 握手连通性与延迟。速度快（几秒），适合批量筛选离线节点。</div>
+        </div>
+        <div @click="runHealthCheck('url')" style="flex:1;min-width:260px;border:1px solid #dcdfe6;border-radius:8px;padding:16px;cursor:pointer;transition:all .2s;" onmouseover="this.style.borderColor='#409eff'" onmouseout="this.style.borderColor='#dcdfe6'">
+          <div style="font-weight:600;font-size:15px;margin-bottom:6px;">🎯 真实延迟测速 (url-test)</div>
+          <div class="hint">真正通过节点代理请求测速 URL（与 Clash 客户端显示的延迟一致），可过滤「能连上但用不了/很慢」的节点。耗时较长。</div>
+        </div>
+      </div>
+    </div>
+    <div v-else-if="hcLoading" style="text-align:center;padding:40px;">
+      <i class="el-icon-loading"></i>
+      {{ hcMode === 'url' ? '正在通过节点代理测速（每节点最多 5 秒）...' : '正在检测节点连通性...' }}
+      <div style="margin-top:10px;"><el-button size="mini" @click="hcMode=''">取消等待</el-button></div>
+    </div>
     <div v-else>
-      <el-descriptions :column="3" border size="small" style="margin-bottom:12px;">
-        <el-descriptions-item label="总数">{{ hcResults.length }}</el-descriptions-item>
-        <el-descriptions-item label="存活">{{ hcResults.filter(function(r){return r.alive}).length }}</el-descriptions-item>
+      <el-descriptions :column="4" border size="small" style="margin-bottom:12px;">
+        <el-descriptions-item label="检测方式">
+          <el-tag size="mini" :type="hcMode === 'url' ? 'primary' : 'info'">{{ hcMode === 'url' ? '真实延迟测速' : 'TCP 快速检测' }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="存活">{{ hcResults.filter(function(r){return r.alive}).length }} / {{ hcResults.length }}</el-descriptions-item>
         <el-descriptions-item label="耗时">{{ hcDuration }}ms</el-descriptions-item>
+        <el-descriptions-item label="阈值内保留">{{ hcKeptCount() }}</el-descriptions-item>
       </el-descriptions>
-      <el-table :data="hcResults" style="width:100%" max-height="500" size="mini" border>
+      <div v-if="hcMode === 'url'" class="hint" style="margin-bottom:8px;">测速地址：{{ hcTestURL || 'http://www.gstatic.com/generate_204' }}（延迟 = 通过节点代理的完整往返）</div>
+      <div style="margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#fdf6ec;padding:8px 12px;border-radius:4px;">
+        <span style="font-size:13px;font-weight:500;">⚡ 一键过滤</span>
+        <span style="font-size:12px;">剔除延迟超过</span>
+        <el-input-number v-model="hcFilterLatency" :min="50" :step="100" size="mini" style="width:120px;"></el-input-number>
+        <span style="font-size:12px;">ms 及离线节点</span>
+        <el-button type="warning" size="mini" :loading="hcApplying" @click="applyLatencyFilter">应用到订阅</el-button>
+        <span class="hint">写入订阅的延迟过滤配置，订阅输出时自动生效</span>
+      </div>
+      <div style="margin-bottom:8px;">
+        <el-button size="mini" @click="runHealthCheck(hcMode)">重新检测</el-button>
+        <el-button size="mini" type="primary" plain @click="hcMode=''">换个检测方式</el-button>
+      </div>
+      <el-table :data="hcResults" style="width:100%" max-height="380" size="mini" border>
         <el-table-column type="index" width="45" label="#"></el-table-column>
         <el-table-column prop="name" label="节点" min-width="200" show-overflow-tooltip></el-table-column>
         <el-table-column prop="server" label="服务器" width="160" show-overflow-tooltip></el-table-column>
@@ -320,7 +402,7 @@ Vue.component('profile-list', {
         <el-table-column label="延迟" width="90" align="center" sortable>
           <template slot-scope="scope">
             <span :style="{color: scope.row.latency > 800 ? '#E6A23C' : scope.row.alive ? '#67C23A' : '#F56C6C'}">
-              {{ scope.row.latency >= 0 ? scope.row.latency + 'ms' : '超时' }}
+              {{ scope.row.latency >= 0 ? scope.row.latency + 'ms' : (hcMode === 'url' ? '失败' : '超时') }}
             </span>
           </template>
         </el-table-column>

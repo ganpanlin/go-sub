@@ -12,7 +12,12 @@ Vue.component('routing-manager', {
             catalogFilter: '',
             // Rule detail
             ruleDetailVisible: false,
-            ruleDetailData: null
+            ruleDetailData: null,
+            // Templates
+            templateDialogVisible: false,
+            templates: [],
+            templateForm: { template: 'balanced', name: '' },
+            applyingTemplate: false
         };
     },
     computed: {
@@ -109,6 +114,31 @@ Vue.component('routing-manager', {
             }).catch(function () { });
         },
 
+        // --- Templates ---
+        openTemplateDialog: function () {
+            var self = this;
+            this.templateForm = { template: 'balanced', name: '' };
+            this.templateDialogVisible = true;
+            if (!this.templates.length) {
+                axios.get('/api/routing/templates').then(function (r) { self.templates = r.data || []; });
+            }
+        },
+        applyTemplate: function () {
+            var self = this;
+            this.applyingTemplate = true;
+            axios.post('/api/routing/apply-template', this.templateForm).then(function (r) {
+                self.$message.success('已创建分流规则「' + (r.data.name || '') + '」（' + (r.data.rules || []).length + ' 条规则）');
+                self.templateDialogVisible = false;
+                self.fetchRouting();
+            }).catch(function (e) {
+                self.$message.error('模板创建失败: ' + apiErrorMessage(e));
+            }).finally(function () { self.applyingTemplate = false; });
+        },
+        templateCardStyle: function (active) {
+            var base = 'border:1px solid ' + (active ? '#409eff' : '#e4e7ed') + ';border-radius:6px;padding:12px 14px;margin-bottom:10px;background:' + (active ? '#ecf5ff' : '#fff') + ';transition:all .2s;';
+            return base;
+        },
+
         // --- Catalog ---
         isCatalogChecked: function (catId, ruleId) {
             return !!(this.catalogChecked[catId] && this.catalogChecked[catId][ruleId]);
@@ -168,7 +198,10 @@ Vue.component('routing-manager', {
 <div>
   <div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
     <span class="hint">定义 proxy-groups / rule-providers / rules 的生成方式。</span>
-    <el-button type="primary" size="small" @click="openRoutingDialog()">新建分流规则</el-button>
+    <div>
+      <el-button type="success" size="small" icon="el-icon-magic-stick" @click="openTemplateDialog">从模板创建</el-button>
+      <el-button type="primary" size="small" @click="openRoutingDialog()">新建分流规则</el-button>
+    </div>
   </div>
 
   <el-collapse v-model="expandedRouting">
@@ -208,9 +241,14 @@ Vue.component('routing-manager', {
       </el-table>
     </el-collapse-item>
   </el-collapse>
+  <div v-if="!routingProfiles.length" class="pf-empty">
+    <i class="el-icon-document-copy pf-empty-icon"></i>
+    <p>暂无分流规则</p>
+    <div class="hint">点击右上角「新建分流规则」或「从模板创建」</div>
+  </div>
 
   <!-- ====== 分流规则编辑对话框 ====== -->
-  <el-dialog :title="routingForm.id ? '编辑分流规则' : '新建分流规则'" :visible.sync="routingDialogVisible" width="1100px" top="3vh">
+  <el-dialog :title="routingForm.id ? '编辑分流规则' : '新建分流规则'" :visible.sync="routingDialogVisible" width="1100px" top="3vh" append-to-body>
     <el-form label-width="70px" size="small" class="rule-edit-form">
       <el-form-item label="名称" required><el-input v-model="routingForm.name" placeholder="例如：默认分流规则"></el-input></el-form-item>
     </el-form>
@@ -315,6 +353,31 @@ Vue.component('routing-manager', {
     <span slot="footer">
       <el-button @click="routingDialogVisible=false">取消</el-button>
       <el-button type="primary" @click="saveRouting">保存</el-button>
+    </span>
+  </el-dialog>
+
+  <!-- ====== 模板创建对话框 ====== -->
+  <el-dialog title="从模板创建分流规则" :visible.sync="templateDialogVisible" width="600px" append-to-body>
+    <div style="max-height:380px;overflow-y:auto;margin-bottom:8px;">
+      <div v-for="t in templates" :key="t.id" :style="templateCardStyle(templateForm.template === t.id)"
+        @click="templateForm.template = t.id">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-weight:600;font-size:14px;">{{ t.name }}</span>
+          <el-tag size="mini" :type="templateForm.template === t.id ? 'primary' : 'info'">{{ (t.rules || []).length }} 条规则</el-tag>
+        </div>
+        <div class="hint">{{ t.description }}</div>
+      </div>
+      <div v-if="!templates.length" style="text-align:center;padding:20px;"><i class="el-icon-loading"></i> 加载模板中...</div>
+    </div>
+    <el-form label-width="70px" size="small">
+      <el-form-item label="名称">
+        <el-input v-model="templateForm.name" placeholder="留空则使用模板名（如：均衡模式）"></el-input>
+      </el-form-item>
+    </el-form>
+    <div class="hint" style="margin-left:8px;">模板基于内置规则库生成，创建后可再编辑调整。不会覆盖已有分流规则。</div>
+    <span slot="footer">
+      <el-button @click="templateDialogVisible=false">取消</el-button>
+      <el-button type="primary" :loading="applyingTemplate" @click="applyTemplate">创建</el-button>
     </span>
   </el-dialog>
 </div>

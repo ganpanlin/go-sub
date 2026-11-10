@@ -6,6 +6,8 @@ new Vue({
         activeTab: 'sources',
         loading: false,
         refreshingSources: false,
+        // Dark mode (class applied early by inline script in index.html)
+        darkMode: document.documentElement.classList.contains('dark'),
         // Shared state
         sources: [],
         profiles: [],
@@ -30,6 +32,13 @@ new Vue({
             this.$refs.routingManager.fetchRouting();
         },
         onTabChange: function () { },
+
+        // === Dark mode ===
+        toggleDark: function () {
+            this.darkMode = !this.darkMode;
+            document.documentElement.classList.toggle('dark', this.darkMode);
+            try { localStorage.setItem('pf_dark', this.darkMode ? '1' : '0'); } catch (e) { }
+        },
 
         // === Version ===
         fetchVersion: function () {

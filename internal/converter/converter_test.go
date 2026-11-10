@@ -22,17 +22,17 @@ var testProxies = []map[string]interface{}{
 		"udp":      true,
 	},
 	{
-		"name":     "JP_02",
-		"type":     "vmess",
-		"server":   "5.6.7.8",
-		"port":     443,
-		"uuid":     "12345678-1234-1234-1234-123456789abc",
-		"alterId":  0,
-		"cipher":   "auto",
-		"network":  "ws",
-		"tls":      true,
-		"sni":      "example.com",
-		"ws-opts":  map[string]interface{}{"path": "/ws", "headers": map[string]interface{}{"Host": "example.com"}},
+		"name":    "JP_02",
+		"type":    "vmess",
+		"server":  "5.6.7.8",
+		"port":    443,
+		"uuid":    "12345678-1234-1234-1234-123456789abc",
+		"alterId": 0,
+		"cipher":  "auto",
+		"network": "ws",
+		"tls":     true,
+		"sni":     "example.com",
+		"ws-opts": map[string]interface{}{"path": "/ws", "headers": map[string]interface{}{"Host": "example.com"}},
 	},
 	{
 		"name":     "US_03",
@@ -335,4 +335,3 @@ func TestWriteOutput(t *testing.T) {
 		t.Fatal("expected content-type header")
 	}
 }
-

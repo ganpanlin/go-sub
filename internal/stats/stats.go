@@ -16,16 +16,16 @@ type AccessEntry struct {
 
 // ProfileStats tracks access statistics for a single profile.
 type ProfileStats struct {
-	AccessCount int          `json:"access_count"`
-	LastAccess  *time.Time   `json:"last_access,omitempty"`
+	AccessCount int           `json:"access_count"`
+	LastAccess  *time.Time    `json:"last_access,omitempty"`
 	RecentLogs  []AccessEntry `json:"recent_logs,omitempty"`
 }
 
 // Tracker tracks subscription access across all profiles.
 type Tracker struct {
-	mu       sync.RWMutex
-	counts   map[string]*ProfileStats  // key = profile ID
-	maxLogs  int
+	mu      sync.RWMutex
+	counts  map[string]*ProfileStats // key = profile ID
+	maxLogs int
 }
 
 var global *Tracker

@@ -50,10 +50,10 @@ func TestDedup_Empty(t *testing.T) {
 func TestValidate(t *testing.T) {
 	proxies := []interface{}{
 		map[string]interface{}{"name": "good", "type": "ss", "server": "1.1.1.1", "port": 443},
-		map[string]interface{}{"type": "ss", "server": "2.2.2.2", "port": 443},            // missing name
-		map[string]interface{}{"name": "no-server", "type": "ss", "port": 443},             // missing server
-		map[string]interface{}{"name": "no-type", "server": "3.3.3.3", "port": 443},        // missing type
-		map[string]interface{}{"name": "no-port", "type": "ss", "server": "4.4.4.4"},       // missing port
+		map[string]interface{}{"type": "ss", "server": "2.2.2.2", "port": 443},       // missing name
+		map[string]interface{}{"name": "no-server", "type": "ss", "port": 443},       // missing server
+		map[string]interface{}{"name": "no-type", "server": "3.3.3.3", "port": 443},  // missing type
+		map[string]interface{}{"name": "no-port", "type": "ss", "server": "4.4.4.4"}, // missing port
 		"not a map", // not a map
 	}
 

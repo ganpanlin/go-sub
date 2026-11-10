@@ -260,10 +260,13 @@ Vue.component('source-list', {
         <el-tooltip content="删除"><el-button size="mini" type="danger" icon="el-icon-delete" circle @click="deleteSource(scope.row)"></el-button></el-tooltip>
       </template>
     </el-table-column>
+    <template slot="empty">
+      <div class="pf-empty"><i class="el-icon-box pf-empty-icon"></i><p>暂无订阅源</p><div class="hint">点击右上角「添加订阅源」开始</div></div>
+    </template>
   </el-table>
 
   <!-- 添加订阅源对话框 -->
-  <el-dialog title="添加订阅源" :visible.sync="addSourceVisible" width="560px">
+  <el-dialog title="添加订阅源" :visible.sync="addSourceVisible" width="560px" append-to-body>
     <el-form label-width="90px" size="small">
       <el-form-item label="名称" required><el-input v-model="addSourceForm.name" placeholder="如：69云、我的VPS"></el-input></el-form-item>
       <el-form-item label="类型">
@@ -293,7 +296,7 @@ Vue.component('source-list', {
   </el-dialog>
 
   <!-- 编辑订阅源对话框 -->
-  <el-dialog title="编辑订阅源" :visible.sync="sourceDialogVisible" width="560px">
+  <el-dialog title="编辑订阅源" :visible.sync="sourceDialogVisible" width="560px" append-to-body>
     <el-form label-width="90px" size="small">
       <el-form-item label="名称" required><el-input v-model="sourceDialogForm.name" placeholder="如：69云、我的VPS"></el-input></el-form-item>
       <el-form-item label="类型"><el-input :value="sourceTypeText(sourceDialogForm.type)" disabled></el-input></el-form-item>
@@ -316,7 +319,7 @@ Vue.component('source-list', {
   </el-dialog>
 
   <!-- 查看源数据对话框 -->
-  <el-dialog :title="'节点数据 - ' + (sourceData.name || '')" :visible.sync="sourceDataVisible" width="960px" top="5vh">
+  <el-dialog :title="'节点数据 - ' + (sourceData.name || '')" :visible.sync="sourceDataVisible" width="960px" top="5vh" append-to-body>
     <div v-if="sourceDataLoading" style="text-align:center;padding:40px;"><i class="el-icon-loading"></i> 加载中...</div>
     <div v-else-if="sourceData.error"><el-alert type="error" :closable="false">{{ sourceData.error }}</el-alert></div>
     <div v-else>
