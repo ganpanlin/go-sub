@@ -85,6 +85,20 @@ docker run -d -p 8080:8080 \
 
 两种检测的结果互相覆盖（以最近一次为准）。未检测过的节点始终保留（保守策略），避免换机/清数据后订阅变空。健康检测会忽略订阅自身的延迟过滤配置，保证被过滤的节点也能复测。
 
+**定时自动检测**：在 `config.json` 中配置后，调度器会周期性对全部启用中的订阅自动执行健康检测并持久化结果，同时刷新订阅输出缓存：
+
+```json
+{
+  "health_check_interval_minutes": 360,
+  "health_check_mode": "url",
+  "health_check_timeout_sec": 5
+}
+```
+
+- `health_check_interval_minutes`：检测周期（分钟），`0` 或缺省 = 关闭
+- `health_check_mode`：`tcp`（默认，快速）或 `url`（真实延迟，推荐用于延迟过滤）
+- `health_check_timeout_sec`：单节点超时，默认 tcp 3 秒 / url 5 秒
+
 ### 自定义规则集
 
 支持创建自定义规则集，对外提供 YAML 格式的 rule-provider 端点：
@@ -123,6 +137,18 @@ VMess、Shadowsocks、ShadowsocksR、Trojan、VLESS、Hysteria2
 | `-http-timeout` | `10` | 远程请求超时（秒） |
 | `-cache-ttl` | `60` | 源缓存时间（分钟） |
 | `-filter-cache-ttl` | `10` | 输出缓存时间（分钟） |
+
+## 配置文件（config.json）
+
+| 字段 | 默认 | 说明 |
+|------|------|------|
+| `refresh_interval_minutes` | 0（关） | 定时刷新全部订阅源的间隔（分钟） |
+| `health_check_interval_minutes` | 0（关） | 定时健康检测的间隔（分钟），保持延迟过滤数据新鲜 |
+| `health_check_mode` | tcp | 定时检测模式：`tcp` / `url` |
+| `health_check_timeout_sec` | 3/5 | 定时检测单节点超时（秒） |
+| `request_ua` | clash | 拉取订阅源时使用的 User-Agent |
+
+启动参数之外，`config.json` 缺失时会从 `config.example.json` 自动生成。定时任务在启动时读取，修改后需重启生效。
 
 ## 安全建议
 
