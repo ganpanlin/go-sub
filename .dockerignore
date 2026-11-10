@@ -1,6 +1,9 @@
 .git
 .claude
+.workbuddy
 .tmp-go-build
+.idea
+.vscode
 cache
 data/auth.json
 data/cache
@@ -9,9 +12,12 @@ data/routing.json
 data/sources.json
 data/rulesets.json
 docker-data
+docs
 *.exe
 *.log
 *.pid
+proxy-filter
+main
 node_modules
 dist
 tmp

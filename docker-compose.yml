@@ -11,7 +11,8 @@ services:
     container_name: proxy-filter
     restart: unless-stopped
     cpus: "1.0"
-    mem_limit: 256m
+    # 内嵌 mihomo 真实延迟测速，url-test 批量跑时内存开销略高
+    mem_limit: 512m
     ports:
       - "8080:8080"
     volumes:

@@ -36,6 +36,8 @@ docker compose up -d --build
 
 首次启动自动初始化默认数据（20 个订阅源、1 个 profile、默认分流规则）。
 
+> **离线构建**：Go 依赖（含内嵌的 mihomo 真实延迟测速内核）已通过 `go mod vendor` 固化在项目 `vendor/` 目录中，Docker 构建阶段使用 `-mod=vendor` 编译，**不需要访问 Go 模块代理**，克隆仓库后可直接离线打包。依赖变更时执行 `go mod vendor` 更新即可。
+
 ### Docker 单独运行
 
 ```bash

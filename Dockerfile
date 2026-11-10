@@ -1,19 +1,23 @@
+# syntax=docker/dockerfile:1
+# 构建说明：依赖（含 mihomo 延迟测速内核）已固化在 vendor/ 目录，
+# 构建阶段 -mod=vendor 离线编译，不需要访问 Go 模块代理。
+
 FROM golang:1.25-alpine AS builder
 
 WORKDIR /src
-COPY go.mod go.sum ./
-
 COPY . .
-RUN go mod tidy
+
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -trimpath \
   -ldflags="-s -w -X go-sub/internal/version.Version=${VERSION} -X go-sub/internal/version.Commit=${COMMIT} -X go-sub/internal/version.BuildTime=${BUILD_TIME}" \
   -o /out/proxy-filter ./cmd/proxy-filter
 
 FROM alpine:3.22
 
+# ca-certificates: mihomo 真实延迟测速需要验证 TLS 证书
+# tzdata: 时区支持
 RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
