@@ -130,7 +130,8 @@ func DetectRegion(nodeName, server string) string {
 		return code
 	}
 	if server != "" {
-		if region := geoip.LookupRegion(server); region != "" {
+		// 管线热路径只读缓存——网络查询由 /api/geoip 或后台任务填充
+		if region := geoip.LookupRegionCached(server); region != "" {
 			if code, ok := RegionShortCode[region]; ok {
 				return code
 			}

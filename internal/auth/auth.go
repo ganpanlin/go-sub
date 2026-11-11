@@ -81,7 +81,11 @@ func CheckPassword(password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
-// CreateJWT generates a new JWT token valid for 24 hours.
+// tokenValidity is how long a JWT stays valid. 30 days keeps the admin UI
+// logged in across restarts instead of prompting for a password daily.
+const tokenValidity = 30 * 24 * time.Hour
+
+// CreateJWT generates a new JWT token valid for tokenValidity.
 func CreateJWT() (string, error) {
 	mu.RLock()
 	secret := cfg.JWTSecret
@@ -90,7 +94,7 @@ func CreateJWT() (string, error) {
 	claims := jwt.MapClaims{
 		"sub": "admin",
 		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
+		"exp": time.Now().Add(tokenValidity).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secret))

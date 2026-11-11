@@ -78,6 +78,8 @@ func setChainCheck(done, total int, name string, nodeDone, nodeTotal int) {
 	chainStatus.CheckTotal = total
 	if nodeTotal > 0 {
 		chainStatus.Checking = &CheckProgress{Name: name, Done: nodeDone, Total: nodeTotal}
+	} else {
+		chainStatus.Checking = nil // 订阅完成/切换时清除旧进度，避免行内残留"检测中"
 	}
 	chainMu.Unlock()
 }
@@ -357,6 +359,7 @@ func prewarmSubscriptionCaches() {
 		chainMu.Lock()
 		chainStatus.Phase = "prewarming"
 		chainStatus.Detail = "预热订阅缓存：" + p.Name
+		chainStatus.Checking = nil
 		chainMu.Unlock()
 		if _, err := pipeline.RunCached(context.Background(), p); err != nil {
 			slog.Warn("pre-warm failed", "profile", p.Name, "error", err)

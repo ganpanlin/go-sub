@@ -47,6 +47,8 @@ func LookupRegion(host string) string {
 	if !isIPAddress(host) {
 		resolved, err := resolveHost(host)
 		if err != nil || resolved == "" {
+			// 负缓存：失败的解析也记录，避免同一主机反复走网络
+			cache.Set(cacheKey, "", time.Hour)
 			return ""
 		}
 		ip = resolved
@@ -57,6 +59,7 @@ func LookupRegion(host string) string {
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
+		cache.Set(cacheKey, "", time.Hour)
 		return ""
 	}
 	defer resp.Body.Close()
@@ -64,9 +67,11 @@ func LookupRegion(host string) string {
 	body, _ := ioutil.ReadAll(resp.Body)
 	var result ipAPIResponse
 	if err := json.Unmarshal(body, &result); err != nil {
+		cache.Set(cacheKey, "", time.Hour)
 		return ""
 	}
 	if result.Status != "success" {
+		cache.Set(cacheKey, "", time.Hour)
 		return ""
 	}
 
@@ -75,10 +80,24 @@ func LookupRegion(host string) string {
 		region = result.CountryCode
 	}
 
-	// 4. Cache for 24 hours
+	// 4. Cache hits for 24 hours, misses for 1 hour
 	cache.Set(cacheKey, region, 24*time.Hour)
 
 	return region
+}
+
+// LookupRegionCached is the cache-only variant used by the pipeline hot path:
+// it NEVER touches the network, so bulk region detection cannot stall on
+// slow/dead DNS or GeoIP APIs. Cache entries are filled by the /api/geoip
+// handler (user-triggered) or any explicit LookupRegion call.
+func LookupRegionCached(host string) string {
+	cacheKey := "geoip:" + host
+	if cached, found := cache.Get(cacheKey); found {
+		if region, ok := cached.(string); ok {
+			return region
+		}
+	}
+	return ""
 }
 
 // BatchLookupRegions resolves multiple hosts concurrently with deduplication.

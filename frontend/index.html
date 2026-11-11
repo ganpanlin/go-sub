@@ -63,8 +63,8 @@
         }
 
         @keyframes pf-enter {
-            from { opacity: 0; transform: translateY(8px); }
-            to   { opacity: 1; transform: none; }
+            from { opacity: 0; }
+            to   { opacity: 1; }
         }
 
         /* ====== 滚动条 ====== */
@@ -326,7 +326,7 @@
 <div id="app">
 
     <!-- ====== 初始化设置 ====== -->
-    <el-dialog :visible.sync="setupVisible" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false" custom-class="pf-auth" width="400px" top="14vh">
+    <el-dialog :visible.sync="setupVisible" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false" custom-class="pf-auth" width="400px" top="14vh" append-to-body>
         <div class="auth-brand">
             <div class="auth-logo">⚡</div>
             <div class="auth-title">欢迎使用 ProxyFilter</div>
@@ -341,7 +341,7 @@
     </el-dialog>
 
     <!-- ====== 登录 ====== -->
-    <el-dialog :visible.sync="loginVisible" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false" custom-class="pf-auth" width="400px" top="14vh">
+    <el-dialog :visible.sync="loginVisible" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false" custom-class="pf-auth" width="400px" top="14vh" append-to-body>
         <div class="auth-brand">
             <div class="auth-logo">⚡</div>
             <div class="auth-title">ProxyFilter</div>
@@ -355,7 +355,7 @@
     </el-dialog>
 
     <!-- ====== 修改密码 ====== -->
-    <el-dialog title="修改密码" :visible.sync="changePwdVisible" width="420px">
+    <el-dialog title="修改密码" :visible.sync="changePwdVisible" width="420px" append-to-body>
         <el-form label-width="90px" size="small">
             <el-form-item label="旧密码" required><el-input v-model="changePwdForm.old_password" type="password" show-password></el-input></el-form-item>
             <el-form-item label="新密码" required><el-input v-model="changePwdForm.new_password" type="password" placeholder="至少6位" show-password></el-input></el-form-item>
@@ -415,11 +415,11 @@
 <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
 
 <!-- 应用代码（按依赖顺序加载） -->
-<script src="api.js?v=20261111-7"></script>
-<script src="components/source-list.js?v=20261111-7"></script>
-<script src="components/profile-list.js?v=20261111-7"></script>
-<script src="components/routing.js?v=20261111-7"></script>
-<script src="components/config-io.js?v=20261111-7"></script>
-<script src="app.js?v=20261111-7"></script>
+<script src="api.js?v=20261111-8"></script>
+<script src="components/source-list.js?v=20261111-8"></script>
+<script src="components/profile-list.js?v=20261111-8"></script>
+<script src="components/routing.js?v=20261111-8"></script>
+<script src="components/config-io.js?v=20261111-8"></script>
+<script src="app.js?v=20261111-8"></script>
 </body>
 </html>

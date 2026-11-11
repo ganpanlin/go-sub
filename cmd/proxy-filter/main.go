@@ -15,6 +15,7 @@ import (
 	"go-sub/internal/settings"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -32,6 +33,16 @@ func main() {
 	cacheTTL := flag.Int("cache-ttl", 60, "Source cache TTL in minutes")
 	filterCacheTTL := flag.Int("filter-cache-ttl", 10, "Filter result cache TTL in minutes")
 	flag.Parse()
+
+	// pprof 调试端点：仅绑定本机回环，用于定位卡顿/泄漏
+	go func() {
+		debugMux := http.NewServeMux()
+		debugMux.HandleFunc("/debug/pprof/", pprof.Index)
+		debugMux.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+		if err := http.ListenAndServe("127.0.0.1:18098", debugMux); err != nil {
+			slog.Info("pprof debug server unavailable", "error", err)
+		}
+	}()
 
 	// Initialize the application configuration
 	appconfig.Init(*port, *configPath, *dataDir, *frontendPath, *httpTimeout, *cacheTTL, *filterCacheTTL)
