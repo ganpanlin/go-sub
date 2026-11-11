@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"go-sub/internal/cache"
+	"go-sub/internal/pipeline"
 	"go-sub/internal/provider"
 	"go-sub/internal/source"
 	"net/http"
@@ -90,7 +91,7 @@ func RefreshSourcesHandler(w http.ResponseWriter, r *http.Request) {
 		failed++
 	}
 
-	cache.DeleteByPrefix("sub:")
+	pipeline.Invalidate()
 	cache.DeleteByPrefix("filter:")
 
 	w.Header().Set("Content-Type", "application/json")

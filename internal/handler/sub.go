@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"go-sub/internal/appconfig"
@@ -63,7 +64,7 @@ func SubHandler(w http.ResponseWriter, r *http.Request) {
 			w.Write(data)
 			// Refresh in background and update cache
 			go func() {
-				result, err := pipeline.Run(profile)
+				result, err := pipeline.RunCached(context.Background(), profile)
 				if err != nil {
 					return
 				}
@@ -79,7 +80,7 @@ func SubHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Pipeline: fetch → dedup → filter → routing
-	result, err := pipeline.Run(profile)
+	result, err := pipeline.RunCached(r.Context(), profile)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -128,7 +129,7 @@ func SimulateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Pipeline
-	result, err := pipeline.Run(profile)
+	result, err := pipeline.RunCached(r.Context(), profile)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -241,9 +242,7 @@ func GeneratePreviewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cache.DeleteByPrefix("sub:")
-
-	result, err := pipeline.Run(profile)
+	result, err := pipeline.RunCached(r.Context(), profile)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

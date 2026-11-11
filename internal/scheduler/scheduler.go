@@ -1,9 +1,9 @@
 package scheduler
 
 import (
+	"context"
 	"encoding/json"
 	"go-sub/internal/appconfig"
-	"go-sub/internal/cache"
 	"go-sub/internal/healthcheck"
 	"go-sub/internal/latency"
 	"go-sub/internal/pipeline"
@@ -113,7 +113,7 @@ func runHealthChecks(mode string, timeout time.Duration) {
 		testProfile.MaxLatency = 0
 		testProfile.DropDead = false
 
-		result, err := pipeline.Run(&testProfile)
+		result, err := pipeline.RunCached(context.Background(), &testProfile)
 		if err != nil {
 			slog.Warn("scheduled health check skipped", "profile", p.Name, "error", err)
 			continue
@@ -138,7 +138,7 @@ func runHealthChecks(mode string, timeout time.Duration) {
 	}
 	// Fresh health data changes filter outcomes — drop cached subscription
 	// output so the next request regenerates with the latest results.
-	cache.DeleteByPrefix("sub:")
+	pipeline.Invalidate()
 }
 
 func refreshAllSources() {

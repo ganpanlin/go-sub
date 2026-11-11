@@ -2,7 +2,7 @@ package handler
 
 import (
 	"encoding/json"
-	"go-sub/internal/cache"
+	"go-sub/internal/pipeline"
 	"go-sub/internal/rule"
 	"net/http"
 )
@@ -39,7 +39,7 @@ func CreateProfileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := rule.GetManager().NewProfile(req.Name)
-	cache.DeleteByPrefix("sub:")
+	pipeline.Invalidate()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(p)
@@ -68,7 +68,7 @@ func UpdateProfileHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	cache.DeleteByPrefix("sub:")
+	pipeline.Invalidate()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(p)
 }
@@ -89,7 +89,7 @@ func DeleteProfileHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	cache.DeleteByPrefix("sub:")
+	pipeline.Invalidate()
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -1,6 +1,8 @@
 package healthcheck
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -49,6 +51,18 @@ func TestStorePersistenceRoundTrip(t *testing.T) {
 	UpdateResults([]NodeResult{
 		{Name: "n1", Server: "1.1.1.1", Port: 443, Alive: true, Latency: 50},
 	})
+
+	// Persistence is asynchronous — wait for the file to appear.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("health-status.json was not written in time")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	// LoadFromPath simulates a fresh process reading the persisted file.
 	if err := LoadFromPath(path); err != nil {
@@ -103,5 +117,64 @@ func TestStoreTestTypeOverwrite(t *testing.T) {
 	e, ok := GetStatus("3.3.3.3", 443)
 	if !ok || e.TestType != "url" || e.Latency != 350 {
 		t.Fatalf("url result should overwrite: %+v found=%v", e, ok)
+	}
+}
+
+func TestSnapshotAndGeneration(t *testing.T) {
+	origPath := statusFilePath
+	statusFilePath = func() string { return "" }
+	defer func() { statusFilePath = origPath }()
+	ResetStoreForTesting()
+
+	before := Generation()
+	UpdateResults([]NodeResult{{Name: "s", Server: "5.5.5.5", Port: 80, Alive: true, Latency: 10}})
+	if Generation() != before+1 {
+		t.Fatalf("generation should bump by 1, got %d -> %d", before, Generation())
+	}
+
+	snap := Snapshot()
+	if e, ok := snap[Key("5.5.5.5", 80)]; !ok || !e.Alive || e.Latency != 10 {
+		t.Fatalf("snapshot missing entry: %+v found=%v", e, ok)
+	}
+	if _, ok := snap[Key("5.5.5.5", 81)]; ok {
+		t.Fatal("snapshot should not contain unrelated endpoints")
+	}
+}
+
+func TestKeyNormalization(t *testing.T) {
+	if Key("ABC.com", 443) != "abc.com|443" {
+		t.Fatalf("Key should lowercase server: %q", Key("ABC.com", 443))
+	}
+}
+
+func TestConcurrentReadWrite(t *testing.T) {
+	origPath := statusFilePath
+	statusFilePath = func() string { return "" }
+	defer func() { statusFilePath = origPath }()
+	ResetStoreForTesting()
+
+	done := make(chan struct{})
+	for w := 0; w < 4; w++ {
+		go func(w int) {
+			defer func() { done <- struct{}{} }()
+			for i := 0; i < 200; i++ {
+				UpdateResults([]NodeResult{{Server: fmt.Sprintf("10.0.%d.%d", w, i), Port: 443, Alive: true, Latency: int64(i)}})
+			}
+		}(w)
+	}
+	for r := 0; r < 4; r++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for i := 0; i < 400; i++ {
+				_ = Snapshot()
+				_, _ = GetStatus("10.0.0.1", 443)
+			}
+		}()
+	}
+	for i := 0; i < 8; i++ {
+		<-done
+	}
+	if len(Snapshot()) < 800 {
+		t.Fatalf("expected at least 800 entries after concurrent writes, got %d", len(Snapshot()))
 	}
 }

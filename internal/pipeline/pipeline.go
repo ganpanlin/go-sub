@@ -195,13 +195,14 @@ func applyHealthFilter(proxies []interface{}, profile *rule.Profile) (filtered [
 	if profile.MaxLatency <= 0 && !profile.DropDead {
 		return proxies, 0
 	}
+	snap := healthcheck.Snapshot()
 	filtered = make([]interface{}, 0, len(proxies))
 	for _, p := range proxies {
 		m, ok := p.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		st, found := healthcheck.GetStatus(fmt.Sprintf("%v", m["server"]), toInt(m["port"]))
+		st, found := snap[healthcheck.Key(fmt.Sprintf("%v", m["server"]), toInt(m["port"]))]
 		if !found {
 			filtered = append(filtered, p)
 			continue
@@ -221,19 +222,20 @@ func applyHealthFilter(proxies []interface{}, profile *rule.Profile) (filtered [
 
 // sortByLatency orders nodes: alive by latency ascending, then unchecked, then dead.
 func sortByLatency(proxies []interface{}) {
+	snap := healthcheck.Snapshot()
 	sort.SliceStable(proxies, func(i, j int) bool {
-		return latencyRank(proxies[i]) < latencyRank(proxies[j])
+		return latencyRank(proxies[i], snap) < latencyRank(proxies[j], snap)
 	})
 }
 
 // latencyRank returns the sort key for a proxy: alive latency (ms),
 // unchecked = MaxInt64-1, dead = MaxInt64.
-func latencyRank(p interface{}) int64 {
+func latencyRank(p interface{}, snap map[string]healthcheck.StatusEntry) int64 {
 	m, ok := p.(map[string]interface{})
 	if !ok {
 		return math.MaxInt64
 	}
-	st, found := healthcheck.GetStatus(fmt.Sprintf("%v", m["server"]), toInt(m["port"]))
+	st, found := snap[healthcheck.Key(fmt.Sprintf("%v", m["server"]), toInt(m["port"]))]
 	if !found {
 		return math.MaxInt64 - 1
 	}

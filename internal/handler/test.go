@@ -2,7 +2,7 @@ package handler
 
 import (
 	"encoding/json"
-	"go-sub/internal/cache"
+	"go-sub/internal/pipeline"
 	"go-sub/internal/provider"
 	"go-sub/internal/source"
 	"log/slog"
@@ -68,7 +68,7 @@ func TestSourceHandler(w http.ResponseWriter, r *http.Request) {
 	slog.Info("source tested", "url", runtimeURL, "status", status, "latency_ms", latency, "cached", isCached, "error", err)
 
 	// Invalidate all sub caches since source data has changed
-	cache.DeleteByPrefix("sub:")
+	pipeline.Invalidate()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)

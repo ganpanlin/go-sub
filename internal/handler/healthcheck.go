@@ -81,7 +81,7 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 		testProfile := *profile
 		testProfile.MaxLatency = 0
 		testProfile.DropDead = false
-		result, err := pipeline.Run(&testProfile)
+		result, err := pipeline.RunCached(r.Context(), &testProfile)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

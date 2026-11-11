@@ -2,7 +2,7 @@ package handler
 
 import (
 	"encoding/json"
-	"go-sub/internal/cache"
+	"go-sub/internal/pipeline"
 	"go-sub/internal/routing"
 	"net/http"
 )
@@ -42,7 +42,7 @@ func RoutingApplyTemplateHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	cache.DeleteByPrefix("sub:")
+	pipeline.Invalidate()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(p)
@@ -91,7 +91,7 @@ func RoutingUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	cache.DeleteByPrefix("sub:")
+	pipeline.Invalidate()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(p)
 }
@@ -111,6 +111,6 @@ func RoutingDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	cache.DeleteByPrefix("sub:")
+	pipeline.Invalidate()
 	w.WriteHeader(http.StatusNoContent)
 }
