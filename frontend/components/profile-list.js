@@ -33,6 +33,7 @@ Vue.component('profile-list', {
             hcFailErr: '',
             hcNodesFetched: false,
             hcBuffer: [],
+            hcSSE: null,
             // Access stats
             profileStats: []
         };
@@ -65,7 +66,7 @@ Vue.component('profile-list', {
     watch: {
         // 关闭对话框即停止轮询；后台任务继续跑完并持久化结果
         hcDialogVisible: function (v) {
-            if (!v) this.stopPolling();
+            if (!v) this.stopStreaming();
         }
     },
     methods: {
@@ -182,7 +183,7 @@ Vue.component('profile-list', {
             this.hcFailErr = '';
             this.hcNodesFetched = false;
             this.hcBuffer = [];
-            this.stopPolling();
+            this.stopStreaming();
         },
         runHealthCheck: function (mode) {
             if (!this.hcProfile) return;
@@ -212,11 +213,35 @@ Vue.component('profile-list', {
                 self.hcPhase = d.phase || 'preparing';
                 self.hcTestURL = d.url || '';
                 self.hcLoading = false;
-                self.startPolling();
+                self.startStreaming();
             }).catch(function (e) {
                 self.$message.error('健康检测失败: ' + apiErrorMessage(e));
                 self.hcLoading = false;
             });
+        },
+        // SSE 实时推送；EventSource 不可用或出错时降级为 700ms 轮询
+        startStreaming: function () {
+            var self = this;
+            this.stopStreaming();
+            if (window.EventSource && this.hcJobId) {
+                var es = new EventSource('/api/health-check/events?job_id=' + this.hcJobId +
+                    '&token=' + localStorage.getItem('pf_token'));
+                this.hcSSE = es;
+                es.onmessage = function (e) {
+                    try { self.applyStatusData(JSON.parse(e.data)); } catch (err) { }
+                };
+                es.onerror = function () {
+                    es.close();
+                    self.hcSSE = null;
+                    self.startPolling();
+                };
+            } else {
+                this.startPolling();
+            }
+        },
+        stopStreaming: function () {
+            this.stopPolling();
+            if (this.hcSSE) { this.hcSSE.close(); this.hcSSE = null; }
         },
         startPolling: function () {
             var self = this;
@@ -227,36 +252,39 @@ Vue.component('profile-list', {
         stopPolling: function () {
             if (this.hcPollTimer) { clearInterval(this.hcPollTimer); this.hcPollTimer = null; }
         },
+        applyStatusData: function (d) {
+            var self = this;
+            self.hcPhase = d.phase || self.hcPhase;
+            if (d.total) self.hcTotal = d.total;
+
+            // preparing 结束后一次性拉取节点清单，预填全部行
+            if (self.hcPhase !== 'preparing' && self.hcPhase !== 'failed' && self.hcTotal > 0 && !self.hcNodesFetched) {
+                self.hcNodesFetched = true;
+                axios.get('/api/health-check/nodes?job_id=' + self.hcJobId).then(function (nr) {
+                    self.hcResults = (nr.data.nodes || []).map(function (n) {
+                        return { name: n.name, server: n.server, port: n.port, alive: false, latency: -1, error: '', pending: true, test_type: self.hcMode };
+                    });
+                    // 应用先于节点清单到达的增量结果
+                    (self.hcBuffer || []).forEach(function (it) { self.applyItem(it); });
+                    self.hcBuffer = [];
+                }).catch(function () { self.hcNodesFetched = false; });
+            }
+
+            (d.items || []).forEach(function (it) { self.applyItem(it); });
+            self.hcSeen += (d.items || []).length;
+            self.hcCompleted = d.completed || 0;
+            if (d.done) {
+                self.stopStreaming();
+                self.hcDone = true;
+                self.hcDuration = Date.now() - self.hcStartTs;
+                if (d.cancelled) self.$message.info('检测已取消，已完成的部分仍然生效');
+            }
+        },
         pollStatus: function () {
             if (!this.hcJobId) return;
             var self = this;
             axios.get('/api/health-check/status?job_id=' + this.hcJobId + '&since=' + this.hcSeen).then(function (r) {
-                var d = r.data || {};
-                self.hcPhase = d.phase || self.hcPhase;
-                if (d.total) self.hcTotal = d.total;
-
-                // preparing 结束后一次性拉取节点清单，预填全部行
-                if (self.hcPhase !== 'preparing' && self.hcPhase !== 'failed' && self.hcTotal > 0 && !self.hcNodesFetched) {
-                    self.hcNodesFetched = true;
-                    axios.get('/api/health-check/nodes?job_id=' + self.hcJobId).then(function (nr) {
-                        self.hcResults = (nr.data.nodes || []).map(function (n) {
-                            return { name: n.name, server: n.server, port: n.port, alive: false, latency: -1, error: '', pending: true, test_type: self.hcMode };
-                        });
-                        // 应用轮询先于节点清单到达的增量结果
-                        (self.hcBuffer || []).forEach(function (it) { self.applyItem(it); });
-                        self.hcBuffer = [];
-                    }).catch(function () { self.hcNodesFetched = false; });
-                }
-
-                (d.items || []).forEach(function (it) { self.applyItem(it); });
-                self.hcSeen += (d.items || []).length;
-                self.hcCompleted = d.completed || 0;
-                if (d.done) {
-                    self.stopPolling();
-                    self.hcDone = true;
-                    self.hcDuration = Date.now() - self.hcStartTs;
-                    if (d.cancelled) self.$message.info('检测已取消，已完成的部分仍然生效');
-                }
+                self.applyStatusData(r.data || {});
             }).catch(function () { });
         },
         applyItem: function (it) {

@@ -52,12 +52,32 @@ type hcJob struct {
 	done       bool
 	cancelled  bool
 	createdAt  time.Time
+	subs       []chan struct{} // SSE subscribers; closed on every update
+}
+
+// subscribe returns a channel that is closed on the next job update.
+func (j *hcJob) subscribe() chan struct{} {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	ch := make(chan struct{})
+	j.subs = append(j.subs, ch)
+	return ch
+}
+
+// notifySubs wakes all SSE listeners. Call while holding j.mu (finish does)
+// or right after the state change under the lock.
+func (j *hcJob) notifySubs() {
+	for _, ch := range j.subs {
+		close(ch)
+	}
+	j.subs = nil
 }
 
 func (j *hcJob) finish(idx int, r healthcheck.NodeResult) {
 	j.mu.Lock()
 	j.finished = append(j.finished, hcFinished{Index: idx, Result: r})
 	j.completed++
+	j.notifySubs()
 	j.mu.Unlock()
 }
 
@@ -270,6 +290,7 @@ func HealthCheckCancelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	job.mu.Lock()
 	job.cancelled = true
+	job.notifySubs()
 	job.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
@@ -305,6 +326,7 @@ func (j *hcJob) run(timeout time.Duration, maxConc int) {
 	if j.cancelled {
 		j.phase = "done"
 		j.done = true
+		j.notifySubs()
 		j.mu.Unlock()
 		return
 	}
@@ -319,6 +341,7 @@ func (j *hcJob) run(timeout time.Duration, maxConc int) {
 		j.phase = "failed"
 		j.failErr = err.Error()
 		j.done = true
+		j.notifySubs()
 		j.mu.Unlock()
 		return
 	}
@@ -337,6 +360,7 @@ func (j *hcJob) run(timeout time.Duration, maxConc int) {
 	j.total = len(j.nodes)
 	j.nodesReady = true
 	j.phase = "testing"
+	j.notifySubs()
 	j.mu.Unlock()
 
 	// Phase 2: testing — per-node checks stream in via status polling.
@@ -369,9 +393,11 @@ func (j *hcJob) run(timeout time.Duration, maxConc int) {
 	j.done = true
 	j.phase = "done"
 	results := make([]healthcheck.NodeResult, 0, len(j.finished))
+	_ = results // filled below
 	for _, f := range j.finished {
 		results = append(results, f.Result)
 	}
+	j.notifySubs()
 	j.mu.Unlock()
 
 	// Persist whatever finished so latency filtering stays fresh.
@@ -401,4 +427,99 @@ func toInt(v interface{}) int {
 		return out
 	}
 	return 0
+}
+
+// HealthCheckEventsHandler streams progressive health check results via SSE.
+//
+// GET /api/health-check/events?job_id=xxx&token=<jwt>
+//
+// Each event is the same JSON shape as the status endpoint
+// (phase/total/completed/done/cancelled/items); items carries everything
+// finished since the previous event. A keepalive comment is sent every 15s.
+func HealthCheckEventsHandler(w http.ResponseWriter, r *http.Request) {
+	jobID := r.URL.Query().Get("job_id")
+	if jobID == "" {
+		http.Error(w, "job_id is required", http.StatusBadRequest)
+		return
+	}
+	job := getJob(jobID)
+	if job == nil {
+		http.Error(w, "Job not found or expired", http.StatusNotFound)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	since := toIntQuery(r.URL.Query().Get("since"))
+	ch := job.subscribe()
+	// 立即推送当前快照
+	send := func() bool {
+		job.mu.Lock()
+		items := job.finished
+		if since > 0 {
+			if since >= len(items) {
+				items = nil
+			} else {
+				items = items[since:]
+			}
+		}
+		payload, err := json.Marshal(struct {
+			JobID     string       `json:"job_id"`
+			Phase     string       `json:"phase"`
+			FailErr   string       `json:"fail_err,omitempty"`
+			Done      bool         `json:"done"`
+			Cancelled bool         `json:"cancelled"`
+			Total     int          `json:"total"`
+			Completed int          `json:"completed"`
+			Items     []hcFinished `json:"items"`
+		}{
+			JobID: jobID, Phase: job.phase, FailErr: job.failErr, Done: job.done,
+			Cancelled: job.cancelled, Total: job.total, Completed: job.completed, Items: items,
+		})
+		job.mu.Unlock()
+		if err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(w, "event: status\ndata: %s\n\n", payload); err != nil {
+			return false
+		}
+		flusher.Flush()
+		since += len(items)
+		return true
+	}
+
+	if !send() {
+		return
+	}
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(15 * time.Second):
+			// keepalive
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-ch:
+			if !send() {
+				return
+			}
+			job.mu.Lock()
+			finishedDone := job.done
+			job.mu.Unlock()
+			if finishedDone {
+				return
+			}
+			ch = job.subscribe()
+		}
+	}
 }

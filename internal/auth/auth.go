@@ -96,7 +96,9 @@ func CreateJWT() (string, error) {
 	return token.SignedString([]byte(secret))
 }
 
-// extractToken pulls the JWT from Authorization header or pf_token cookie.
+// extractToken pulls the JWT from Authorization header, pf_token cookie,
+// or ?token= query param (last resort — needed for EventSource/SSE, which
+// cannot send custom headers).
 func extractToken(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimPrefix(h, "Bearer ")
@@ -104,7 +106,7 @@ func extractToken(r *http.Request) string {
 	if c, err := r.Cookie("pf_token"); err == nil && c.Value != "" {
 		return c.Value
 	}
-	return ""
+	return r.URL.Query().Get("token")
 }
 
 // ValidateJWT checks a token string and returns true if valid.

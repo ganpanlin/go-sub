@@ -28,9 +28,23 @@ func (r *responseRecorder) Write(data []byte) (int, error) {
 	return r.body.Write(data)
 }
 
+// Flush lets streaming handlers (SSE) pass through the envelope wrapper.
+func (r *responseRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // ApiResponseMiddleware wraps API responses as {code,msg,data}.
 func ApiResponseMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// SSE 流式响应直接透传——信封会缓冲整个响应，破坏事件流
+		if strings.Contains(req.Header.Get("Accept"), "text/event-stream") ||
+			strings.HasSuffix(req.URL.Path, "/health-check/events") {
+			next.ServeHTTP(w, req)
+			return
+		}
+
 		rec := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, req)
 
