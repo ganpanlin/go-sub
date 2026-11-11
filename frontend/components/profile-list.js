@@ -22,6 +22,13 @@ Vue.component('profile-list', {
             hcApplying: false,
             hcMode: '',
             hcTestURL: '',
+            hcJobId: '',
+            hcSeen: 0,
+            hcTotal: 0,
+            hcCompleted: 0,
+            hcDone: false,
+            hcPollTimer: null,
+            hcStartTs: 0,
             // Access stats
             profileStats: []
         };
@@ -31,6 +38,13 @@ Vue.component('profile-list', {
         routingProfiles: function () { return this.$root.routingProfiles; },
         sources: function () { return this.$root.sources; },
         loading: function () { return this.$root.loading; },
+        hcProgressPct: function () {
+            if (!this.hcTotal) return 0;
+            return Math.min(100, Math.round(this.hcCompleted / this.hcTotal * 100));
+        },
+        hcAliveCount: function () {
+            return this.hcResults.filter(function (r) { return r.alive && !r.pending; }).length;
+        },
         sourceTransferData: function () {
             var self = this;
             return this.sources.map(function (s) {
@@ -38,6 +52,12 @@ Vue.component('profile-list', {
                 var label = (s.name && s.name !== s.url) ? s.name : (location.length > 40 ? location.substring(0, 40) + '...' : location);
                 return { id: sourceKey(s), url: location, label: label, name: s.name || '' };
             });
+        }
+    },
+    watch: {
+        // 关闭对话框即停止轮询；后台任务继续跑完并持久化结果
+        hcDialogVisible: function (v) {
+            if (!v) this.stopPolling();
         }
     },
     methods: {
@@ -143,16 +163,27 @@ Vue.component('profile-list', {
             this.hcProfile = row;
             this.hcResults = [];
             this.hcDialogVisible = true;
-            this.hcLoading = false;
-            this.hcDuration = 0;
             this.hcMode = ''; // idle: let the user pick a mode first
+            this.hcDone = false;
+            this.hcJobId = '';
+            this.hcSeen = 0;
+            this.hcCompleted = 0;
+            this.hcTotal = 0;
+            this.hcDuration = 0;
+            this.stopPolling();
         },
         runHealthCheck: function (mode) {
             if (!this.hcProfile) return;
+            this.stopPolling();
             this.hcMode = mode;
             this.hcLoading = true;
             this.hcResults = [];
+            this.hcDone = false;
+            this.hcJobId = '';
+            this.hcSeen = 0;
+            this.hcCompleted = 0;
             this.hcDuration = 0;
+            this.hcStartTs = Date.now();
             var self = this;
             axios.post('/api/health-check', {
                 profile_id: this.hcProfile.id,
@@ -160,24 +191,73 @@ Vue.component('profile-list', {
                 timeout: mode === 'url' ? 5 : 3
             }).then(function (r) {
                 var d = r.data || {};
-                self.hcResults = d.results || [];
-                self.hcDuration = d.duration_ms || 0;
-                if (mode === 'url' && d.url) self.hcTestURL = d.url;
+                self.hcJobId = d.job_id || '';
+                self.hcTotal = d.total || 0;
+                self.hcTestURL = d.url || '';
+                // Pre-fill every row as pending; polling fills in results live.
+                self.hcResults = (d.nodes || []).map(function (n) {
+                    return { name: n.name, server: n.server, port: n.port, alive: false, latency: -1, error: '', pending: true, test_type: mode };
+                });
+                self.hcLoading = false;
+                self.startPolling();
             }).catch(function (e) {
                 self.$message.error('健康检测失败: ' + apiErrorMessage(e));
-            }).finally(function () { self.hcLoading = false; });
+                self.hcLoading = false;
+            });
+        },
+        startPolling: function () {
+            var self = this;
+            this.stopPolling();
+            this.pollStatus();
+            this.hcPollTimer = setInterval(function () { self.pollStatus(); }, 700);
+        },
+        stopPolling: function () {
+            if (this.hcPollTimer) { clearInterval(this.hcPollTimer); this.hcPollTimer = null; }
+        },
+        pollStatus: function () {
+            if (!this.hcJobId) return;
+            var self = this;
+            axios.get('/api/health-check/status?job_id=' + this.hcJobId + '&since=' + this.hcSeen).then(function (r) {
+                var d = r.data || {};
+                (d.items || []).forEach(function (it) {
+                    var row = self.hcResults[it.index];
+                    if (!row) return;
+                    row.alive = it.result.alive;
+                    row.latency = it.result.latency;
+                    row.error = it.result.error || '';
+                    row.pending = false;
+                    row.test_type = it.result.test_type;
+                });
+                self.hcSeen += (d.items || []).length;
+                self.hcCompleted = d.completed || 0;
+                if (d.done) {
+                    self.stopPolling();
+                    self.hcDone = true;
+                    self.hcDuration = Date.now() - self.hcStartTs;
+                    if (d.cancelled) self.$message.info('检测已取消，已完成的部分仍然生效');
+                }
+            }).catch(function () { });
+        },
+        cancelHealthCheck: function () {
+            if (!this.hcJobId) return;
+            var self = this;
+            axios.post('/api/health-check/cancel', { job_id: this.hcJobId }).then(function () {
+                self.$message.info('正在取消，已完成的部分仍然生效…');
+            }).catch(function () { });
         },
         hcTagType: function (r) {
+            if (r.pending) return 'info';
             if (!r.alive) return 'danger';
             if (r.latency > 800) return 'warning';
             return 'success';
         },
         hcKeptCount: function () {
             var max = this.hcFilterLatency || 0;
-            return this.hcResults.filter(function (r) { return r.alive && (!max || r.latency <= max); }).length;
+            return this.hcResults.filter(function (r) { return !r.pending && r.alive && (!max || r.latency <= max); }).length;
         },
         applyLatencyFilter: function () {
             if (!this.hcProfile) return;
+            if (!this.hcDone) return this.$message.warning('等待检测完成后再应用');
             var self = this;
             this.hcApplying = true;
             axios.put('/api/profiles?id=' + this.hcProfile.id, {
@@ -362,22 +442,26 @@ Vue.component('profile-list', {
         </div>
       </div>
     </div>
-    <div v-else-if="hcLoading" style="text-align:center;padding:40px;">
-      <i class="el-icon-loading"></i>
-      {{ hcMode === 'url' ? '正在通过节点代理测速（每节点最多 5 秒）...' : '正在检测节点连通性...' }}
-      <div style="margin-top:10px;"><el-button size="mini" @click="hcMode=''">取消等待</el-button></div>
-    </div>
+    <div v-else-if="hcLoading" style="text-align:center;padding:40px;"><i class="el-icon-loading"></i> 正在启动检测任务...</div>
     <div v-else>
-      <el-descriptions :column="4" border size="small" style="margin-bottom:12px;">
-        <el-descriptions-item label="检测方式">
+      <!-- 进度：结果实时流入 -->
+      <el-progress :percentage="hcProgressPct" :stroke-width="14" :status="hcDone ? 'success' : undefined" style="margin-bottom:8px;"></el-progress>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+        <span style="font-size:13px;">
           <el-tag size="mini" :type="hcMode === 'url' ? 'primary' : 'info'">{{ hcMode === 'url' ? '真实延迟测速' : 'TCP 快速检测' }}</el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="存活">{{ hcResults.filter(function(r){return r.alive}).length }} / {{ hcResults.length }}</el-descriptions-item>
-        <el-descriptions-item label="耗时">{{ hcDuration }}ms</el-descriptions-item>
-        <el-descriptions-item label="阈值内保留">{{ hcKeptCount() }}</el-descriptions-item>
-      </el-descriptions>
+          已完成 {{ hcCompleted }} / {{ hcTotal }}
+          <span style="color:#67C23A;font-weight:600;">存活 {{ hcAliveCount }}</span>
+          <span v-if="hcDone" style="color:#909399;">· 耗时 {{ (hcDuration / 1000).toFixed(1) }}s · 阈值内保留 {{ hcKeptCount() }}</span>
+          <span v-else class="hint">· 结果实时更新，无需等全部完成</span>
+        </span>
+        <div>
+          <el-button v-if="!hcDone" size="mini" @click="cancelHealthCheck">取消检测</el-button>
+          <el-button v-if="hcDone" size="mini" @click="runHealthCheck(hcMode)">重新检测</el-button>
+          <el-button v-if="hcDone" size="mini" type="primary" plain @click="hcMode=''">换个检测方式</el-button>
+        </div>
+      </div>
       <div v-if="hcMode === 'url'" class="hint" style="margin-bottom:8px;">测速地址：{{ hcTestURL || 'http://www.gstatic.com/generate_204' }}（延迟 = 通过节点代理的完整往返）</div>
-      <div style="margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#fdf6ec;padding:8px 12px;border-radius:4px;">
+      <div v-if="hcDone" style="margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#fdf6ec;padding:8px 12px;border-radius:4px;">
         <span style="font-size:13px;font-weight:500;">⚡ 一键过滤</span>
         <span style="font-size:12px;">剔除延迟超过</span>
         <el-input-number v-model="hcFilterLatency" :min="50" :step="100" size="mini" style="width:120px;"></el-input-number>
@@ -385,29 +469,27 @@ Vue.component('profile-list', {
         <el-button type="warning" size="mini" :loading="hcApplying" @click="applyLatencyFilter">应用到订阅</el-button>
         <span class="hint">写入订阅的延迟过滤配置，订阅输出时自动生效</span>
       </div>
-      <div style="margin-bottom:8px;">
-        <el-button size="mini" @click="runHealthCheck(hcMode)">重新检测</el-button>
-        <el-button size="mini" type="primary" plain @click="hcMode=''">换个检测方式</el-button>
-      </div>
-      <el-table :data="hcResults" style="width:100%" max-height="380" size="mini" border>
+      <el-table :data="hcResults" style="width:100%" max-height="400" size="mini" border>
         <el-table-column type="index" width="45" label="#"></el-table-column>
         <el-table-column prop="name" label="节点" min-width="200" show-overflow-tooltip></el-table-column>
         <el-table-column prop="server" label="服务器" width="160" show-overflow-tooltip></el-table-column>
         <el-table-column prop="port" label="端口" width="70"></el-table-column>
-        <el-table-column label="状态" width="80" align="center">
+        <el-table-column label="状态" width="90" align="center">
           <template slot-scope="scope">
-            <el-tag :type="hcTagType(scope.row)" size="mini">{{ scope.row.alive ? '✓' : '✗' }}</el-tag>
+            <el-tag v-if="scope.row.pending" size="mini" type="info"><i class="el-icon-loading"></i> 检测中</el-tag>
+            <el-tag v-else :type="hcTagType(scope.row)" size="mini">{{ scope.row.alive ? '✓' : '✗' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="延迟" width="90" align="center" sortable>
+        <el-table-column label="延迟" width="90" align="center">
           <template slot-scope="scope">
-            <span :style="{color: scope.row.latency > 800 ? '#E6A23C' : scope.row.alive ? '#67C23A' : '#F56C6C'}">
+            <span v-if="scope.row.pending" class="hint">…</span>
+            <span v-else :style="{color: scope.row.latency > 800 ? '#E6A23C' : scope.row.alive ? '#67C23A' : '#F56C6C'}">
               {{ scope.row.latency >= 0 ? scope.row.latency + 'ms' : (hcMode === 'url' ? '失败' : '超时') }}
             </span>
           </template>
         </el-table-column>
         <el-table-column prop="error" label="错误" min-width="120" show-overflow-tooltip>
-          <template slot-scope="scope"><span class="hint">{{ scope.row.error || '-' }}</span></template>
+          <template slot-scope="scope"><span class="hint">{{ scope.row.pending ? '' : (scope.row.error || '-') }}</span></template>
         </el-table-column>
       </el-table>
     </div>

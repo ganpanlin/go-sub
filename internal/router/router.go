@@ -68,8 +68,10 @@ func NewRouter() *mux.Router {
 	api.HandleFunc("/simulate", handler.SimulateHandler).Methods("POST")
 	api.HandleFunc("/preview", handler.GeneratePreviewHandler).Methods("GET")
 
-	// Health Check (TCP ping on nodes)
+	// Health Check (TCP ping / url-test on nodes, async job + progressive polling)
 	api.HandleFunc("/health-check", handler.HealthCheckHandler).Methods("POST")
+	api.HandleFunc("/health-check/status", handler.HealthCheckStatusHandler).Methods("GET")
+	api.HandleFunc("/health-check/cancel", handler.HealthCheckCancelHandler).Methods("POST")
 
 	// Profile access statistics
 	api.HandleFunc("/profiles/stats", handler.ProfileStatsHandler).Methods("GET")
