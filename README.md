@@ -85,17 +85,17 @@ docker run -d -p 8080:8080 \
 
 两种检测的结果互相覆盖（以最近一次为准）。未检测过的节点始终保留（保守策略），避免换机/清数据后订阅变空。健康检测会忽略订阅自身的延迟过滤配置，保证被过滤的节点也能复测。
 
-**定时自动检测**：在 `config.json` 中配置后，调度器会周期性对全部启用中的订阅自动执行健康检测并持久化结果，同时刷新订阅输出缓存：
+**定时自动检测**：启动后立即执行一次「拉取订阅 → 延迟测试 → 预热订阅缓存」链路，之后默认**每 60 分钟**自动重复（检测的每个节点延迟值（ms）与时间戳都持久化到 `data/health-status.json`，阈值 `max_latency` 保存在订阅配置中）：
 
 ```json
 {
-  "health_check_interval_minutes": 360,
+  "health_check_interval_minutes": 60,
   "health_check_mode": "url",
   "health_check_timeout_sec": 5
 }
 ```
 
-- `health_check_interval_minutes`：检测周期（分钟），`0` 或缺省 = 关闭
+- `health_check_interval_minutes`：链路周期（分钟）。**缺省 = 60**；`0` = 关闭
 - `health_check_mode`：`tcp`（默认，快速）或 `url`（真实延迟，推荐用于延迟过滤）
 - `health_check_timeout_sec`：单节点超时，默认 tcp 3 秒 / url 5 秒
 

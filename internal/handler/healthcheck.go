@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"go-sub/internal/latency"
 	"go-sub/internal/pipeline"
 	"go-sub/internal/rule"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -32,18 +34,24 @@ type hcFinished struct {
 }
 
 // hcJob tracks a running health check so clients can poll progressive results.
+// Phases: preparing (pipeline: fetch/parse nodes, can take a while on big
+// profiles) → testing (per-node checks stream in) → done.
 type hcJob struct {
-	mu        sync.Mutex
-	mode      string
-	testURL   string
-	total     int
-	proxies   []map[string]interface{} // full proxy configs (url mode needs them)
-	nodes     []healthcheck.NodeResult // identity of every node, in input order
-	finished  []hcFinished             // completion order
-	completed int
-	done      bool
-	cancelled bool
-	createdAt time.Time
+	mu         sync.Mutex
+	phase      string // preparing | testing | done | failed
+	failErr    string
+	mode       string
+	testURL    string
+	total      int
+	profile    rule.Profile             // copy with latency filter bypassed
+	proxies    []map[string]interface{} // full proxy configs (url mode needs them)
+	nodes      []healthcheck.NodeResult // identity of every node, in input order
+	nodesReady bool
+	finished   []hcFinished // completion order
+	completed  int
+	done       bool
+	cancelled  bool
+	createdAt  time.Time
 }
 
 func (j *hcJob) finish(idx int, r healthcheck.NodeResult) {
@@ -100,7 +108,7 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var proxies []map[string]interface{}
+	var profileCopy rule.Profile
 	if req.ProfileID != "" {
 		mgr := rule.GetManager()
 		if mgr == nil {
@@ -116,15 +124,11 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Test the full node set: disable the profile's health filter for this run.
-		testProfile := *profile
-		testProfile.MaxLatency = 0
-		testProfile.DropDead = false
-		result, err := pipeline.RunCached(r.Context(), &testProfile)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		proxies = result.Proxies
+		// The pipeline itself runs in the job goroutine — POST never blocks on it
+		// (big all-sources profiles can take a while to fetch/parse).
+		profileCopy = *profile
+		profileCopy.MaxLatency = 0
+		profileCopy.DropDead = false
 	} else if req.SourceID != "" {
 		http.Error(w, "Source-level health check not yet implemented, use profile_id", http.StatusBadRequest)
 		return
@@ -132,12 +136,8 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "profile_id is required", http.StatusBadRequest)
 		return
 	}
-	if len(proxies) == 0 {
-		http.Error(w, "No proxies to check", http.StatusBadRequest)
-		return
-	}
 
-	defaultTimeout, defaultConc := 3, 20
+	defaultTimeout, defaultConc := 3, 50
 	if req.Mode == "url" {
 		defaultTimeout, defaultConc = 5, 16
 	}
@@ -152,22 +152,11 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 		testURL = latency.DefaultTestURL
 	}
 
-	nodes := make([]healthcheck.NodeResult, len(proxies))
-	for i, p := range proxies {
-		nodes[i] = healthcheck.NodeResult{
-			Name:    fmt.Sprintf("%v", p["name"]),
-			Server:  fmt.Sprintf("%v", p["server"]),
-			Port:    toInt(p["port"]),
-			Latency: -1,
-		}
-	}
-
 	job := &hcJob{
 		mode:      req.Mode,
 		testURL:   testURL,
-		total:     len(nodes),
-		proxies:   proxies,
-		nodes:     nodes,
+		profile:   profileCopy,
+		phase:     "preparing",
 		createdAt: time.Now(),
 	}
 	jobID := newJobID()
@@ -179,11 +168,36 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"job_id": jobID,
-		"total":  job.total,
+		"total":  0,
+		"phase":  "preparing",
 		"mode":   req.Mode,
 		"url":    testURL,
-		"nodes":  nodes,
 	})
+}
+
+// HealthCheckNodesHandler returns the node identity list of a job (one-time
+// fetch, once the pipeline phase has produced the node set).
+func HealthCheckNodesHandler(w http.ResponseWriter, r *http.Request) {
+	jobID := r.URL.Query().Get("job_id")
+	if jobID == "" {
+		http.Error(w, "job_id is required", http.StatusBadRequest)
+		return
+	}
+	job := getJob(jobID)
+	if job == nil {
+		http.Error(w, "Job not found or expired", http.StatusNotFound)
+		return
+	}
+	job.mu.Lock()
+	ready := job.nodesReady
+	nodes := job.nodes
+	job.mu.Unlock()
+	if !ready {
+		http.Error(w, "Nodes not ready yet", http.StatusConflict)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"nodes": nodes})
 }
 
 // HealthCheckStatusHandler returns progressive results of a health check job.
@@ -216,6 +230,8 @@ func HealthCheckStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	out := struct {
 		JobID     string       `json:"job_id"`
+		Phase     string       `json:"phase"`
+		FailErr   string       `json:"fail_err,omitempty"`
 		Done      bool         `json:"done"`
 		Cancelled bool         `json:"cancelled"`
 		Total     int          `json:"total"`
@@ -223,6 +239,8 @@ func HealthCheckStatusHandler(w http.ResponseWriter, r *http.Request) {
 		Items     []hcFinished `json:"items"`
 	}{
 		JobID:     jobID,
+		Phase:     job.phase,
+		FailErr:   job.failErr,
 		Done:      job.done,
 		Cancelled: job.cancelled,
 		Total:     job.total,
@@ -257,9 +275,9 @@ func HealthCheckCancelHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 }
 
-// run executes the checks with a worker pool, streaming each result into the
-// job as it completes. Cancelled jobs skip the remaining nodes but still
-// persist whatever finished.
+// run prepares the node set (pipeline) then executes the checks with a worker
+// pool, streaming each result into the job as it completes. Cancelled jobs
+// skip the remaining nodes but still persist whatever finished.
 func (j *hcJob) run(timeout time.Duration, maxConc int) {
 	defer func() {
 		hcJobsMu.Lock()
@@ -280,6 +298,48 @@ func (j *hcJob) run(timeout time.Duration, maxConc int) {
 		}
 	}()
 
+	// Phase 1: preparing — resolve the node set via the (cached) pipeline.
+	// Big all-sources profiles may need a while; the pipeline has its own
+	// 60s bound so this cannot hang forever.
+	j.mu.Lock()
+	if j.cancelled {
+		j.phase = "done"
+		j.done = true
+		j.mu.Unlock()
+		return
+	}
+	j.mu.Unlock()
+
+	slog.Info("hc job: preparing start", "mode", j.mode)
+	testProfile := j.profile
+	result, err := pipeline.RunCached(context.Background(), &testProfile)
+	slog.Info("hc job: preparing done", "mode", j.mode, "err", err != nil)
+	if err != nil {
+		j.mu.Lock()
+		j.phase = "failed"
+		j.failErr = err.Error()
+		j.done = true
+		j.mu.Unlock()
+		return
+	}
+
+	j.mu.Lock()
+	j.proxies = result.Proxies
+	j.nodes = make([]healthcheck.NodeResult, len(result.Proxies))
+	for i, p := range result.Proxies {
+		j.nodes[i] = healthcheck.NodeResult{
+			Name:    fmt.Sprintf("%v", p["name"]),
+			Server:  fmt.Sprintf("%v", p["server"]),
+			Port:    toInt(p["port"]),
+			Latency: -1,
+		}
+	}
+	j.total = len(j.nodes)
+	j.nodesReady = true
+	j.phase = "testing"
+	j.mu.Unlock()
+
+	// Phase 2: testing — per-node checks stream in via status polling.
 	sem := make(chan struct{}, maxConc)
 	var wg sync.WaitGroup
 	for i := range j.nodes {
@@ -307,6 +367,7 @@ func (j *hcJob) run(timeout time.Duration, maxConc int) {
 
 	j.mu.Lock()
 	j.done = true
+	j.phase = "done"
 	results := make([]healthcheck.NodeResult, 0, len(j.finished))
 	for _, f := range j.finished {
 		results = append(results, f.Result)

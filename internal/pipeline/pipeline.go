@@ -8,10 +8,12 @@ import (
 	"go-sub/internal/routing"
 	"go-sub/internal/rule"
 	"go-sub/internal/source"
+	"log/slog"
 	"math"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // SourceInfo records the result of fetching a single subscription source.
@@ -35,6 +37,11 @@ type Result struct {
 	HealthDropped int // nodes removed by health-based filtering (dead / over max latency)
 }
 
+// pipelineTimeout bounds one full pipeline run (source fetches dominate).
+// Sources that don't finish in time are skipped with an error recorded in
+// Sources — partial results beat a multi-minute hang on flaky free sources.
+const pipelineTimeout = 60 * time.Second
+
 // Run fetches all sources for a profile, deduplicates, filters, and builds routing config.
 // This is the shared data preparation pipeline used by /sub, /simulate, /preview.
 func Run(profile *rule.Profile) (*Result, error) {
@@ -43,9 +50,13 @@ func Run(profile *rule.Profile) (*Result, error) {
 
 // RunCtx is like Run but accepts a context for cancellation and timeout propagation.
 func RunCtx(ctx context.Context, profile *rule.Profile) (*Result, error) {
+	ctx, cancel := context.WithTimeout(ctx, pipelineTimeout)
+	defer cancel()
 	// 1. Resolve source URLs
+	startTs := time.Now()
 	sourceURLs := source.EnabledRuntimeURLs(profile.Sources)
 	sourceNames := source.NameMap()
+	slog.Info("pipeline start", "profile", profile.Name, "sources", len(sourceURLs))
 
 	var mergedProxies []interface{}
 	var firstConfig map[string]interface{}
@@ -85,6 +96,7 @@ func RunCtx(ctx context.Context, profile *rule.Profile) (*Result, error) {
 				si.Error = err.Error()
 			}
 
+			slog.Debug("source fetched", "url", displayURL(url), "ok", err == nil, "nodes", si.NodeCount, "ms", time.Since(startTs).Milliseconds())
 			mu.Lock()
 			sources = append(sources, si)
 			if err == nil {
@@ -105,6 +117,7 @@ func RunCtx(ctx context.Context, profile *rule.Profile) (*Result, error) {
 	}
 	wg.Wait()
 
+	slog.Debug("pipeline fetch phase done", "profile", profile.Name, "elapsed_ms", time.Since(startTs).Milliseconds())
 	if firstConfig == nil {
 		return nil, fmt.Errorf("no valid configuration found")
 	}
@@ -113,13 +126,16 @@ func RunCtx(ctx context.Context, profile *rule.Profile) (*Result, error) {
 	}
 
 	// 3. Deduplicate + validate
+	t0 := time.Now()
 	mergedProxies = dedup(mergedProxies)
 	mergedProxies = validate(mergedProxies)
 	totalBefore := len(mergedProxies)
+	slog.Debug("pipeline dedup done", "nodes", totalBefore, "ms", time.Since(t0).Milliseconds())
 
 	// 3.5 Health-based filtering: drop dead nodes and nodes over the latency threshold
 	// based on the last persisted health check (see /api/health-check).
 	mergedProxies, healthDropped := applyHealthFilter(mergedProxies, profile)
+	slog.Debug("pipeline health filter done", "dropped", healthDropped, "left", len(mergedProxies), "ms", time.Since(t0).Milliseconds())
 
 	// 4. Apply profile rule engine (filter, rename, sort, etc.)
 	engine, err := rule.NewEngine(profile)
@@ -127,11 +143,13 @@ func RunCtx(ctx context.Context, profile *rule.Profile) (*Result, error) {
 		return nil, fmt.Errorf("rule engine error: %w", err)
 	}
 	filteredProxies := engine.Process(mergedProxies)
+	slog.Debug("pipeline engine done", "nodes", len(filteredProxies), "ms", time.Since(t0).Milliseconds())
 
 	// 4.5 Latency sort: fastest first, then unchecked, then dead (rule engine ignores "latency")
 	if profile.SortBy == "latency" {
 		sortByLatency(filteredProxies)
 	}
+	slog.Debug("pipeline sort done", "ms", time.Since(t0).Milliseconds())
 
 	// 5. Apply source prefix
 	if profile.SourcePrefix != "" && profile.SourcePrefix != "off" {
@@ -166,6 +184,7 @@ func RunCtx(ctx context.Context, profile *rule.Profile) (*Result, error) {
 	rp := routing.GetManager().GetEffective(profile.RoutingID)
 	proxyNames := getNames(filteredProxies)
 	groups, ruleProviders, rules := routing.BuildConfig(rp, proxyNames)
+	slog.Debug("pipeline routing done", "groups", len(groups), "rules", len(rules), "ms", time.Since(t0).Milliseconds())
 
 	// 8. Extra config (base config from first source)
 	extra := make(map[string]interface{})
@@ -175,6 +194,7 @@ func RunCtx(ctx context.Context, profile *rule.Profile) (*Result, error) {
 		}
 	}
 
+	slog.Info("pipeline done", "profile", profile.Name, "total_ms", time.Since(startTs).Milliseconds())
 	return &Result{
 		Proxies:       proxyMaps,
 		Groups:        groups,

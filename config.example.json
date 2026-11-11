@@ -1,6 +1,6 @@
 {
   "refresh_interval_minutes": 120,
-  "health_check_interval_minutes": 360,
+  "health_check_interval_minutes": 60,
   "health_check_mode": "url",
   "health_check_timeout_sec": 5,
   "request_ua": "clash"

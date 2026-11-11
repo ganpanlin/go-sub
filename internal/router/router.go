@@ -71,6 +71,7 @@ func NewRouter() *mux.Router {
 	// Health Check (TCP ping / url-test on nodes, async job + progressive polling)
 	api.HandleFunc("/health-check", handler.HealthCheckHandler).Methods("POST")
 	api.HandleFunc("/health-check/status", handler.HealthCheckStatusHandler).Methods("GET")
+	api.HandleFunc("/health-check/nodes", handler.HealthCheckNodesHandler).Methods("GET")
 	api.HandleFunc("/health-check/cancel", handler.HealthCheckCancelHandler).Methods("POST")
 
 	// Profile access statistics

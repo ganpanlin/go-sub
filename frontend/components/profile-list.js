@@ -29,6 +29,10 @@ Vue.component('profile-list', {
             hcDone: false,
             hcPollTimer: null,
             hcStartTs: 0,
+            hcPhase: '',
+            hcFailErr: '',
+            hcNodesFetched: false,
+            hcBuffer: [],
             // Access stats
             profileStats: []
         };
@@ -44,6 +48,10 @@ Vue.component('profile-list', {
         },
         hcAliveCount: function () {
             return this.hcResults.filter(function (r) { return r.alive && !r.pending; }).length;
+        },
+        hcDisplayRows: function () {
+            // Element UI 表格无虚拟滚动：几千节点只渲染前 500 行，计数仍统计全部
+            return this.hcResults.slice(0, 500);
         },
         sourceTransferData: function () {
             var self = this;
@@ -170,6 +178,10 @@ Vue.component('profile-list', {
             this.hcCompleted = 0;
             this.hcTotal = 0;
             this.hcDuration = 0;
+            this.hcPhase = '';
+            this.hcFailErr = '';
+            this.hcNodesFetched = false;
+            this.hcBuffer = [];
             this.stopPolling();
         },
         runHealthCheck: function (mode) {
@@ -182,7 +194,12 @@ Vue.component('profile-list', {
             this.hcJobId = '';
             this.hcSeen = 0;
             this.hcCompleted = 0;
+            this.hcTotal = 0;
             this.hcDuration = 0;
+            this.hcPhase = 'preparing';
+            this.hcFailErr = '';
+            this.hcNodesFetched = false;
+            this.hcBuffer = [];
             this.hcStartTs = Date.now();
             var self = this;
             axios.post('/api/health-check', {
@@ -192,12 +209,8 @@ Vue.component('profile-list', {
             }).then(function (r) {
                 var d = r.data || {};
                 self.hcJobId = d.job_id || '';
-                self.hcTotal = d.total || 0;
+                self.hcPhase = d.phase || 'preparing';
                 self.hcTestURL = d.url || '';
-                // Pre-fill every row as pending; polling fills in results live.
-                self.hcResults = (d.nodes || []).map(function (n) {
-                    return { name: n.name, server: n.server, port: n.port, alive: false, latency: -1, error: '', pending: true, test_type: mode };
-                });
                 self.hcLoading = false;
                 self.startPolling();
             }).catch(function (e) {
@@ -219,15 +232,23 @@ Vue.component('profile-list', {
             var self = this;
             axios.get('/api/health-check/status?job_id=' + this.hcJobId + '&since=' + this.hcSeen).then(function (r) {
                 var d = r.data || {};
-                (d.items || []).forEach(function (it) {
-                    var row = self.hcResults[it.index];
-                    if (!row) return;
-                    row.alive = it.result.alive;
-                    row.latency = it.result.latency;
-                    row.error = it.result.error || '';
-                    row.pending = false;
-                    row.test_type = it.result.test_type;
-                });
+                self.hcPhase = d.phase || self.hcPhase;
+                if (d.total) self.hcTotal = d.total;
+
+                // preparing 结束后一次性拉取节点清单，预填全部行
+                if (self.hcPhase !== 'preparing' && self.hcPhase !== 'failed' && self.hcTotal > 0 && !self.hcNodesFetched) {
+                    self.hcNodesFetched = true;
+                    axios.get('/api/health-check/nodes?job_id=' + self.hcJobId).then(function (nr) {
+                        self.hcResults = (nr.data.nodes || []).map(function (n) {
+                            return { name: n.name, server: n.server, port: n.port, alive: false, latency: -1, error: '', pending: true, test_type: self.hcMode };
+                        });
+                        // 应用轮询先于节点清单到达的增量结果
+                        (self.hcBuffer || []).forEach(function (it) { self.applyItem(it); });
+                        self.hcBuffer = [];
+                    }).catch(function () { self.hcNodesFetched = false; });
+                }
+
+                (d.items || []).forEach(function (it) { self.applyItem(it); });
                 self.hcSeen += (d.items || []).length;
                 self.hcCompleted = d.completed || 0;
                 if (d.done) {
@@ -237,6 +258,15 @@ Vue.component('profile-list', {
                     if (d.cancelled) self.$message.info('检测已取消，已完成的部分仍然生效');
                 }
             }).catch(function () { });
+        },
+        applyItem: function (it) {
+            var row = this.hcResults[it.index];
+            if (!row) { this.hcBuffer.push(it); return; } // 节点清单未就绪，先缓冲
+            row.alive = it.result.alive;
+            row.latency = it.result.latency;
+            row.error = it.result.error || '';
+            row.pending = false;
+            row.test_type = it.result.test_type;
         },
         cancelHealthCheck: function () {
             if (!this.hcJobId) return;
@@ -444,15 +474,19 @@ Vue.component('profile-list', {
     </div>
     <div v-else-if="hcLoading" style="text-align:center;padding:40px;"><i class="el-icon-loading"></i> 正在启动检测任务...</div>
     <div v-else>
+      <el-alert v-if="hcPhase === 'failed'" type="error" :closable="false" style="margin-bottom:12px;" :title="'获取节点失败：' + (hcFailErr || '未知错误')"></el-alert>
       <!-- 进度：结果实时流入 -->
       <el-progress :percentage="hcProgressPct" :stroke-width="14" :status="hcDone ? 'success' : undefined" style="margin-bottom:8px;"></el-progress>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
         <span style="font-size:13px;">
           <el-tag size="mini" :type="hcMode === 'url' ? 'primary' : 'info'">{{ hcMode === 'url' ? '真实延迟测速' : 'TCP 快速检测' }}</el-tag>
-          已完成 {{ hcCompleted }} / {{ hcTotal }}
-          <span style="color:#67C23A;font-weight:600;">存活 {{ hcAliveCount }}</span>
-          <span v-if="hcDone" style="color:#909399;">· 耗时 {{ (hcDuration / 1000).toFixed(1) }}s · 阈值内保留 {{ hcKeptCount() }}</span>
-          <span v-else class="hint">· 结果实时更新，无需等全部完成</span>
+          <template v-if="hcPhase === 'preparing'">正在获取节点列表（大订阅聚合多个源，可能需要一点时间）…</template>
+          <template v-else>
+            已完成 {{ hcCompleted }} / {{ hcTotal }}
+            <span style="color:#67C23A;font-weight:600;">存活 {{ hcAliveCount }}</span>
+            <span v-if="hcDone" style="color:#909399;">· 耗时 {{ (hcDuration / 1000).toFixed(1) }}s · 阈值内保留 {{ hcKeptCount() }}</span>
+            <span v-else class="hint">· 结果实时更新，无需等全部完成</span>
+          </template>
         </span>
         <div>
           <el-button v-if="!hcDone" size="mini" @click="cancelHealthCheck">取消检测</el-button>
@@ -469,7 +503,7 @@ Vue.component('profile-list', {
         <el-button type="warning" size="mini" :loading="hcApplying" @click="applyLatencyFilter">应用到订阅</el-button>
         <span class="hint">写入订阅的延迟过滤配置，订阅输出时自动生效</span>
       </div>
-      <el-table :data="hcResults" style="width:100%" max-height="400" size="mini" border>
+      <el-table :data="hcDisplayRows" style="width:100%" max-height="400" size="mini" border>
         <el-table-column type="index" width="45" label="#"></el-table-column>
         <el-table-column prop="name" label="节点" min-width="200" show-overflow-tooltip></el-table-column>
         <el-table-column prop="server" label="服务器" width="160" show-overflow-tooltip></el-table-column>
@@ -492,6 +526,9 @@ Vue.component('profile-list', {
           <template slot-scope="scope"><span class="hint">{{ scope.row.pending ? '' : (scope.row.error || '-') }}</span></template>
         </el-table-column>
       </el-table>
+      <div v-if="hcResults.length > 500" class="hint" style="margin-top:6px;">
+        共 {{ hcResults.length }} 个节点，表格仅显示前 500 个；过滤和统计始终基于全部节点。
+      </div>
     </div>
   </el-dialog>
 </div>

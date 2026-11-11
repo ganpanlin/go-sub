@@ -60,7 +60,9 @@ func SetWithDisk(key string, value interface{}, ttl time.Duration) {
 	}
 }
 
-// Get returns a value from memory cache.
+// Get returns a value from memory cache. Expired entries are reported as a
+// miss but NOT deleted — GetStale can still serve them while a refresh runs
+// (stale-while-revalidate). Cleanup happens via Delete/DeleteByPrefix/TTL overwrite.
 func Get(key string) (interface{}, bool) {
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -69,10 +71,6 @@ func Get(key string) (interface{}, bool) {
 		return nil, false
 	}
 	if time.Now().UnixNano() > item.Expiration {
-		delete(memCache, key)
-		if diskDir != "" {
-			go removeFromDisk(key)
-		}
 		return nil, false
 	}
 	return item.Value, true

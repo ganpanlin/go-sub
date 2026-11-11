@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go-sub/internal/appconfig"
+	"go-sub/internal/cache"
 )
 
 // initTestConfig sets up a minimal appconfig for tests.
@@ -271,5 +272,40 @@ func TestDoHTTPRequest_TLSRetryOnCertError(t *testing.T) {
 	}
 	if ProxyCount(config) != 1 {
 		t.Fatalf("expected 1 proxy, got %d", ProxyCount(config))
+	}
+}
+
+func TestStaleWhileRevalidate(t *testing.T) {
+	initTestConfig()
+	url := "http://127.0.0.1:1/unreachable.yaml" // will never respond
+	yamlBody := []byte("proxies:\n  - name: stale-node\n    type: ss\n    server: 1.2.3.4\n    port: 443\n    cipher: aes-128-gcm\n    password: pw\n")
+	// Seed an EXPIRED cache entry (stale) — the network is unreachable.
+	cache.SetWithDisk(url, CachedItem{Body: yamlBody, Status: 200}, -time.Second)
+
+	start := time.Now()
+	config, status, _, cached, err := FetchAndParseYAMLCtx(context.Background(), url, 1)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("stale entry must be served without network error: %v", err)
+	}
+	if !cached {
+		t.Fatal("stale serve should be marked cached")
+	}
+	if status != 200 {
+		t.Fatalf("stale status = %d, want 200", status)
+	}
+	if config == nil || len(config["proxies"].([]interface{})) != 1 {
+		t.Fatalf("stale proxies not parsed: %+v", config)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("stale serve must not wait for network, took %v", elapsed)
+	}
+
+	// Allow the background refresh goroutine to finish (it will fail against
+	// the unreachable URL — must not crash or overwrite the stale entry).
+	time.Sleep(200 * time.Millisecond)
+	if _, found := cache.GetStale(url); !found {
+		t.Fatal("failed background refresh must keep the stale entry")
 	}
 }

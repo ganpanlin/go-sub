@@ -32,8 +32,8 @@ func TestLoadConfigFull(t *testing.T) {
 	if c.RefreshIntervalMinutes != 120 {
 		t.Fatalf("RefreshIntervalMinutes = %d, want 120", c.RefreshIntervalMinutes)
 	}
-	if c.HealthCheckIntervalMinutes != 360 {
-		t.Fatalf("HealthCheckIntervalMinutes = %d, want 360", c.HealthCheckIntervalMinutes)
+	if c.HealthIntervalOrDefault() != 360 {
+		t.Fatalf("HealthIntervalOrDefault = %d, want 360", c.HealthIntervalOrDefault())
 	}
 	if c.HealthCheckMode != "url" {
 		t.Fatalf("HealthCheckMode = %q, want url", c.HealthCheckMode)
@@ -49,8 +49,12 @@ func TestLoadConfigFull(t *testing.T) {
 func TestLoadConfigMissingFile(t *testing.T) {
 	setupConfig(t, "")
 	c := LoadConfig()
-	if c.RefreshIntervalMinutes != 0 || c.HealthCheckIntervalMinutes != 0 {
-		t.Fatalf("missing config should yield zero values, got %+v", c)
+	if c.RefreshIntervalMinutes != 0 {
+		t.Fatalf("missing config should yield zero refresh, got %+v", c)
+	}
+	// absent field defaults to 60-minute chain
+	if c.HealthIntervalOrDefault() != 60 {
+		t.Fatalf("default health interval = %d, want 60", c.HealthIntervalOrDefault())
 	}
 	// Jobs stay disabled on zero config; timeout helper falls back per mode.
 	if got := healthCheckTimeout(Config{}); got.String() != "3s" {
@@ -64,8 +68,11 @@ func TestLoadConfigMissingFile(t *testing.T) {
 func TestLoadConfigInvalidJSON(t *testing.T) {
 	setupConfig(t, `{bad json`)
 	c := LoadConfig()
-	if c.RefreshIntervalMinutes != 0 || c.HealthCheckIntervalMinutes != 0 {
-		t.Fatalf("invalid config should yield zero values, got %+v", c)
+	if c.RefreshIntervalMinutes != 0 {
+		t.Fatalf("invalid config should yield zero refresh, got %+v", c)
+	}
+	if c.HealthIntervalOrDefault() != 60 {
+		t.Fatalf("invalid config should still default health interval to 60, got %d", c.HealthIntervalOrDefault())
 	}
 }
 

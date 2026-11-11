@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"go-sub/internal/appconfig"
+	"go-sub/internal/cache"
 	"go-sub/internal/healthcheck"
 	"go-sub/internal/latency"
 	"go-sub/internal/pipeline"
@@ -12,22 +13,33 @@ import (
 	"go-sub/internal/source"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 )
 
 // Config represents the structure of the config.json file for the scheduler.
 type Config struct {
-	RefreshIntervalMinutes int `json:"refresh_interval_minutes"`
-	// HealthCheckIntervalMinutes: 0 disables scheduled health checks.
-	// When enabled, every enabled profile is re-checked and results are
-	// persisted, keeping max_latency/drop_dead filtering fresh.
-	HealthCheckIntervalMinutes int    `json:"health_check_interval_minutes"`
+	RefreshIntervalMinutes int `json:"refresh_interval_minutes"` // extra standalone refresh cycle; 0 = off
+	// HealthCheckIntervalMinutes drives the periodic chain
+	// (refresh sources → health check → pre-warm subscription caches).
+	// nil (absent) = default 60 minutes; 0 = disabled.
+	HealthCheckIntervalMinutes *int   `json:"health_check_interval_minutes"`
 	HealthCheckMode            string `json:"health_check_mode"`        // "tcp" (default) | "url" (real proxy round trip)
 	HealthCheckTimeoutSec      int    `json:"health_check_timeout_sec"` // per-node timeout, default 3 (tcp) / 5 (url)
 }
 
+const defaultHealthCheckIntervalMinutes = 60
+
+// HealthIntervalOrDefault resolves the health-check cycle interval.
+func (c Config) HealthIntervalOrDefault() int {
+	if c.HealthCheckIntervalMinutes == nil {
+		return defaultHealthCheckIntervalMinutes
+	}
+	return *c.HealthCheckIntervalMinutes
+}
+
 // LoadConfig reads scheduler settings from config.json. Missing file or fields
-// yield zero values (all scheduled jobs disabled).
+// fall back to defaults (health-check chain every 60 minutes).
 func LoadConfig() Config {
 	var config Config
 	file, err := os.ReadFile(appconfig.Get().ConfigPath)
@@ -40,48 +52,52 @@ func LoadConfig() Config {
 	return config
 }
 
-// Start enables the scheduled jobs (source refresh, health checks) according
-// to config.json. Jobs with a non-positive interval are disabled.
+// Start launches the scheduled jobs:
+//   - immediately after startup: refresh sources → health check → pre-warm
+//   - every HealthCheckIntervalMinutes (default 60): the same chain
+//   - optional extra standalone source refresh (refresh_interval_minutes)
 func Start() {
 	config := LoadConfig()
+	healthInterval := config.HealthIntervalOrDefault()
+	healthMode := config.HealthCheckMode
+	if healthMode != "url" {
+		healthMode = "tcp"
+	}
 
-	if _, err := os.Stat(appconfig.Get().ConfigPath); err != nil {
-		slog.Info("scheduler disabled, config.json not found")
-	} else {
-		if config.RefreshIntervalMinutes > 0 {
-			interval := time.Duration(config.RefreshIntervalMinutes) * time.Minute
-			ticker := time.NewTicker(interval)
-			slog.Info("scheduled refresh enabled", "interval_minutes", config.RefreshIntervalMinutes)
-			go func() {
-				for {
-					<-ticker.C
-					slog.Info("running scheduled refresh")
-					refreshAllSources()
-				}
-			}()
-		} else {
-			slog.Info("scheduled refresh disabled by config")
-		}
+	chain := func() {
+		refreshAllSourcesSync()
+		runHealthChecks(healthMode, healthCheckTimeout(config))
+		prewarmSubscriptionCaches()
+	}
 
-		if config.HealthCheckIntervalMinutes > 0 {
-			mode := config.HealthCheckMode
-			if mode != "url" {
-				mode = "tcp"
+	// Startup: fetch subscriptions, then immediately latency-test and pre-warm.
+	go chain()
+
+	if healthInterval > 0 {
+		ticker := time.NewTicker(time.Duration(healthInterval) * time.Minute)
+		slog.Info("scheduled chain enabled (refresh → health check → pre-warm)",
+			"interval_minutes", healthInterval, "mode", healthMode)
+		go func() {
+			for {
+				<-ticker.C
+				slog.Info("running scheduled chain", "mode", healthMode)
+				chain()
 			}
-			interval := time.Duration(config.HealthCheckIntervalMinutes) * time.Minute
-			ticker := time.NewTicker(interval)
-			slog.Info("scheduled health check enabled",
-				"interval_minutes", config.HealthCheckIntervalMinutes, "mode", mode)
-			go func() {
-				for {
-					<-ticker.C
-					slog.Info("running scheduled health check", "mode", mode)
-					runHealthChecks(mode, healthCheckTimeout(config))
-				}
-			}()
-		} else {
-			slog.Info("scheduled health check disabled by config")
-		}
+		}()
+	} else {
+		slog.Info("periodic health check disabled by config")
+	}
+
+	if config.RefreshIntervalMinutes > 0 {
+		ticker := time.NewTicker(time.Duration(config.RefreshIntervalMinutes) * time.Minute)
+		slog.Info("standalone scheduled refresh enabled", "interval_minutes", config.RefreshIntervalMinutes)
+		go func() {
+			for {
+				<-ticker.C
+				slog.Info("running scheduled refresh")
+				refreshAllSourcesSync()
+			}
+		}()
 	}
 }
 
@@ -95,10 +111,45 @@ func healthCheckTimeout(config Config) time.Duration {
 	return 3 * time.Second
 }
 
-// runHealthChecks re-checks every enabled profile and persists the results.
-// The profile's own latency filter is bypassed so previously filtered nodes
-// get re-tested too (recovery possible). Subscription output caches are
-// invalidated afterwards so the next request applies the fresh data.
+// refreshAllSourcesSync refreshes all enabled sources and waits for completion
+// so the health check always runs against freshly pulled subscriptions.
+func refreshAllSourcesSync() {
+	sources, err := source.LoadAll()
+	if err != nil {
+		slog.Error("scheduler failed to read sources", "error", err)
+		return
+	}
+	slog.Info("scheduled refresh start", "sources", len(sources))
+	start := time.Now()
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for _, src := range sources {
+		if !src.Enabled {
+			continue
+		}
+		wg.Add(1)
+		go func(s source.Config) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			runtimeURL := source.RuntimeURL(s)
+			config, status, lat, isCached, err := provider.FetchAndParseYAML(runtimeURL)
+			if err != nil {
+				slog.Warn("scheduled refresh failed", "url", runtimeURL, "error", err)
+				return
+			}
+			slog.Info("scheduled refresh done", "url", runtimeURL, "status", status,
+				"nodes", provider.ProxyCount(config), "latency_ms", lat, "cached", isCached)
+		}(src)
+	}
+	wg.Wait()
+	slog.Info("scheduled refresh complete", "elapsed_ms", time.Since(start).Milliseconds())
+}
+
+// runHealthChecks re-checks every enabled profile and persists the latency
+// values to data/health-status.json. The profile's own latency filter is
+// bypassed so previously filtered nodes get re-tested too (recovery possible).
 func runHealthChecks(mode string, timeout time.Duration) {
 	mgr := rule.GetManager()
 	if mgr == nil {
@@ -121,9 +172,9 @@ func runHealthChecks(mode string, timeout time.Duration) {
 
 		var results []healthcheck.NodeResult
 		if mode == "url" {
-			results = latency.TestNodes(result.Proxies, "", timeout, 8)
+			results = latency.TestNodes(result.Proxies, "", timeout, 16)
 		} else {
-			results = healthcheck.CheckNodes(result.Proxies, 20, timeout)
+			results = healthcheck.CheckNodes(result.Proxies, 100, timeout)
 		}
 		healthcheck.UpdateResults(results)
 
@@ -137,28 +188,26 @@ func runHealthChecks(mode string, timeout time.Duration) {
 			"profile", p.Name, "total", len(results), "alive", alive, "mode", mode)
 	}
 	// Fresh health data changes filter outcomes — drop cached subscription
-	// output so the next request regenerates with the latest results.
-	pipeline.Invalidate()
+	// output so the next request applies the fresh data.
+	cache.DeleteByPrefix("sub:")
 }
 
-func refreshAllSources() {
-	sources, err := source.LoadAll()
-	if err != nil {
-		slog.Error("scheduler failed to read sources", "error", err)
+// prewarmSubscriptionCaches rebuilds the pipeline result for every enabled
+// profile right after the health check, so client requests hit warm caches
+// with the freshest latency filtering already applied.
+func prewarmSubscriptionCaches() {
+	mgr := rule.GetManager()
+	if mgr == nil {
 		return
 	}
-	slog.Info("sources to refresh", "count", len(sources))
-
-	for _, src := range sources {
-		if !src.Enabled {
+	for _, p := range mgr.GetAllProfiles() {
+		if !p.Enabled {
 			continue
 		}
-		go func(s source.Config) {
-			runtimeURL := source.RuntimeURL(s)
-			config, status, latency, isCached, err := provider.FetchAndParseYAML(runtimeURL)
-			_ = config
-			_ = err
-			slog.Info("refreshed source", "url", runtimeURL, "status", status, "latency_ms", latency, "cached", isCached)
-		}(src)
+		if _, err := pipeline.RunCached(context.Background(), p); err != nil {
+			slog.Warn("pre-warm failed", "profile", p.Name, "error", err)
+			continue
+		}
+		slog.Info("subscription cache pre-warmed", "profile", p.Name)
 	}
 }

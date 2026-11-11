@@ -10,8 +10,10 @@ import (
 	"go-sub/internal/parser"
 	"go-sub/internal/source"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -101,6 +103,21 @@ func fetchAndParseYAML(ctx context.Context, yamlURL string, skipCache bool, over
 				return config, item.Status, latency, true, nil
 			}
 		}
+		// Cache expired: serve the stale body immediately and refresh in the
+		// background, so slow/dead sources never block subscriptions or
+		// health checks. First-ever fetch still goes to the network.
+		if stale, found := cache.GetStale(yamlURL); found {
+			if item, ok := stale.(CachedItem); ok {
+				go refreshSourceInBackground(yamlURL, overrideUA, maxRetries)
+				start := time.Now()
+				config, err := parser.ParseYAML(item.Body)
+				latency := time.Since(start).Milliseconds()
+				if err != nil {
+					return nil, item.Status, latency, true, err
+				}
+				return config, item.Status, latency, true, nil
+			}
+		}
 	}
 
 	// --- HTTP fetch with retry ---
@@ -166,6 +183,49 @@ func doHTTPRequest(ctx context.Context, yamlURL, ua string) (map[string]interfac
 		config, status, latency, cached, err = doHTTPRequestOnce(ctx, yamlURL, ua, true)
 	}
 	return config, status, latency, cached, err
+}
+
+// Background refresh dedup: many concurrent requests may hit the same expired
+// source; only one refresh runs at a time per URL.
+var (
+	refreshMu      sync.Mutex
+	refreshOngoing = make(map[string]bool)
+)
+
+// refreshSourceInBackground re-fetches an expired source off the hot path and
+// updates its cache entry. Used by stale-while-revalidate.
+func refreshSourceInBackground(yamlURL, overrideUA string, maxRetries int) {
+	refreshMu.Lock()
+	if refreshOngoing[yamlURL] {
+		refreshMu.Unlock()
+		return
+	}
+	refreshOngoing[yamlURL] = true
+	refreshMu.Unlock()
+	defer func() {
+		refreshMu.Lock()
+		delete(refreshOngoing, yamlURL)
+		refreshMu.Unlock()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	ua := GetRequestUA()
+	if overrideUA != "" {
+		if preset, ok := UAPresets[overrideUA]; ok {
+			ua = preset
+		} else {
+			ua = overrideUA
+		}
+	}
+
+	config, status, lat, _, err := doHTTPRequest(ctx, yamlURL, ua)
+	if err != nil {
+		slog.Warn("background source refresh failed", "url", yamlURL, "status", status, "error", err)
+		return
+	}
+	slog.Info("background source refreshed", "url", yamlURL, "status", status, "nodes", ProxyCount(config), "latency_ms", lat)
 }
 
 // doHTTPRequestOnce performs a single HTTP GET attempt.
