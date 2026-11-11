@@ -35,8 +35,19 @@ Vue.component('profile-list', {
             hcBuffer: [],
             hcSSE: null,
             // Access stats
-            profileStats: []
+            profileStats: [],
+            // Scheduler chain status (refresh → check → pre-warm)
+            chainStatus: null,
+            chainTimer: null
         };
+    },
+    created: function () {
+        var self = this;
+        this.fetchChainStatus();
+        this.chainTimer = setInterval(function () { self.fetchChainStatus(); }, 3000);
+    },
+    beforeDestroy: function () {
+        if (this.chainTimer) { clearInterval(this.chainTimer); this.chainTimer = null; }
     },
     computed: {
         profiles: function () { return this.$root.profiles; },
@@ -49,6 +60,15 @@ Vue.component('profile-list', {
         },
         hcAliveCount: function () {
             return this.hcResults.filter(function (r) { return r.alive && !r.pending; }).length;
+        },
+        chainText: function () {
+            var c = this.chainStatus;
+            if (!c || c.phase === 'idle') return '';
+            if (c.phase === 'checking') {
+                return '检测订阅延迟中（' + (c.check_done || 0) + '/' + c.check_total + '）— 进度见各订阅行，完成后自动预热缓存';
+            }
+            var t = c.detail || c.phase;
+            return t + ' — 订阅请求稍候即可命中热缓存';
         },
         hcDisplayRows: function () {
             // Element UI 表格无虚拟滚动：几千节点只渲染前 500 行，计数仍统计全部
@@ -71,6 +91,28 @@ Vue.component('profile-list', {
     },
     methods: {
         // --- Data ---
+        checkingIs: function (row) {
+            var c = this.chainStatus;
+            return !!(c && c.checking && c.checking.name === row.name);
+        },
+        pendingHas: function (row) {
+            var c = this.chainStatus;
+            return !!(c && c.pending && c.pending.indexOf(row.name) >= 0);
+        },
+        checkedHas: function (row) {
+            var c = this.chainStatus;
+            return !!(c && c.checked && c.checked.indexOf(row.name) >= 0);
+        },
+        lastResultOf: function (row) {
+            var c = this.chainStatus;
+            return (c && c.last_results) ? c.last_results[row.name] : null;
+        },
+        fetchChainStatus: function () {
+            var self = this;
+            axios.get('/api/scheduler/status').then(function (r) {
+                self.chainStatus = r.data || { phase: 'idle' };
+            }).catch(function () { });
+        },
         fetchProfiles: function () {
             var self = this;
             axios.get('/api/profiles').then(function (r) { self.$root.profiles = r.data || []; });
@@ -342,6 +384,10 @@ Vue.component('profile-list', {
     },
     template: `
 <div>
+  <!-- 启动链路状态横幅 -->
+  <div v-if="chainText" style="margin-bottom:12px;padding:8px 12px;border-radius:4px;background:#ecf5ff;border:1px solid #d9ecff;color:#409eff;font-size:13px;display:flex;align-items:center;gap:8px;">
+    <i class="el-icon-loading"></i><span>{{ chainText }}</span>
+  </div>
   <!-- 工具栏 -->
   <div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
     <el-button type="primary" size="small" @click="openProfileDialog()">新建聚合订阅</el-button>
@@ -365,6 +411,17 @@ Vue.component('profile-list', {
     </el-table-column>
     <el-table-column label="订阅链接" min-width="160">
       <template slot-scope="scope"><div class="sub-url">{{ subUrl(scope.row.token) }}</div></template>
+    </el-table-column>
+    <el-table-column label="检测" width="140" align="center">
+      <template slot-scope="scope">
+        <el-tag v-if="checkingIs(scope.row)" size="mini" type="warning">
+          <i class="el-icon-loading"></i> 检测中 {{ (chainStatus.checking || {}).done || 0 }}/{{ (chainStatus.checking || {}).total || 0 }}
+        </el-tag>
+        <el-tag v-else-if="pendingHas(scope.row)" size="mini" type="info">待检测</el-tag>
+        <el-tag v-else-if="checkedHas(scope.row)" size="mini" type="success">检测完成</el-tag>
+        <span v-else-if="lastResultOf(scope.row)" class="hint">存活 {{ lastResultOf(scope.row).alive }}/{{ lastResultOf(scope.row).total }}</span>
+        <span v-else class="hint">-</span>
+      </template>
     </el-table-column>
     <el-table-column label="访问" width="90" align="center">
       <template slot-scope="scope">

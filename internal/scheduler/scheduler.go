@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"go-sub/internal/appconfig"
 	"go-sub/internal/cache"
+	"go-sub/internal/datastore"
 	"go-sub/internal/healthcheck"
 	"go-sub/internal/latency"
 	"go-sub/internal/pipeline"
@@ -29,6 +30,88 @@ type Config struct {
 }
 
 const defaultHealthCheckIntervalMinutes = 60
+
+// CheckProgress 当前订阅的节点级检测进度
+type CheckProgress struct {
+	Name  string `json:"name"`
+	Done  int    `json:"done"`
+	Total int    `json:"total"`
+}
+
+// CheckSummary 一个订阅最近一次检测的结果摘要（持久化到 check-summaries.json）
+type CheckSummary struct {
+	Total int       `json:"total"`
+	Alive int       `json:"alive"`
+	At    time.Time `json:"at"`
+}
+
+// ChainStatus 是调度链路的实时状态，供前端展示（拉取中/检测中/预热中）。
+type ChainStatus struct {
+	Phase       string                  `json:"phase"`                  // idle | refreshing | checking | prewarming
+	Detail      string                  `json:"detail,omitempty"`       // 当前动作描述
+	CheckDone   int                     `json:"check_done,omitempty"`   // 已完成检测的订阅数
+	CheckTotal  int                     `json:"check_total,omitempty"`  // 待检测订阅总数
+	Checking    *CheckProgress          `json:"checking,omitempty"`     // 检测中（节点级进度）
+	Pending     []string                `json:"pending,omitempty"`      // 待检测订阅名
+	Checked     []string                `json:"checked,omitempty"`      // 本轮已完成订阅名
+	LastResults map[string]CheckSummary `json:"last_results,omitempty"` // 每订阅上次检测摘要
+	LastRun     time.Time               `json:"last_run,omitempty"`
+	LastError   string                  `json:"last_error,omitempty"`
+}
+
+var (
+	chainMu     sync.Mutex
+	chainStatus = ChainStatus{Phase: "idle"}
+)
+
+func setChain(phase, detail string) {
+	chainMu.Lock()
+	chainStatus.Phase = phase
+	chainStatus.Detail = detail
+	chainMu.Unlock()
+}
+
+func setChainCheck(done, total int, name string, nodeDone, nodeTotal int) {
+	chainMu.Lock()
+	chainStatus.Phase = "checking"
+	chainStatus.CheckDone = done
+	chainStatus.CheckTotal = total
+	if nodeTotal > 0 {
+		chainStatus.Checking = &CheckProgress{Name: name, Done: nodeDone, Total: nodeTotal}
+	}
+	chainMu.Unlock()
+}
+
+// setChainQueues 更新待检测/已检测队列
+func setChainQueues(pending, checked []string) {
+	chainMu.Lock()
+	chainStatus.Pending = pending
+	chainStatus.Checked = checked
+	chainMu.Unlock()
+}
+
+// recordCheckSummary 记录并持久化单订阅检测摘要
+func recordCheckSummary(name string, total, alive int) {
+	chainMu.Lock()
+	if chainStatus.LastResults == nil {
+		chainStatus.LastResults = map[string]CheckSummary{}
+	}
+	chainStatus.LastResults[name] = CheckSummary{Total: total, Alive: alive, At: time.Now()}
+	snapshot := chainStatus.LastResults
+	chainMu.Unlock()
+	_ = datastore.WriteJSON("check-summaries.json", snapshot)
+}
+
+// GetChainStatus returns a snapshot of the scheduler chain state.
+func GetChainStatus() ChainStatus {
+	chainMu.Lock()
+	defer chainMu.Unlock()
+	out := chainStatus
+	if chainStatus.Phase == "idle" {
+		out.Detail = ""
+	}
+	return out
+}
 
 // HealthIntervalOrDefault resolves the health-check cycle interval.
 func (c Config) HealthIntervalOrDefault() int {
@@ -58,6 +141,14 @@ func LoadConfig() Config {
 //   - optional extra standalone source refresh (refresh_interval_minutes)
 func Start() {
 	config := LoadConfig()
+
+	// 载入上次的检测摘要（重启后行内仍可展示最近结果）
+	var summaries map[string]CheckSummary
+	if err := datastore.ReadJSON("check-summaries.json", &summaries); err == nil && len(summaries) > 0 {
+		chainMu.Lock()
+		chainStatus.LastResults = summaries
+		chainMu.Unlock()
+	}
 	healthInterval := config.HealthIntervalOrDefault()
 	healthMode := config.HealthCheckMode
 	if healthMode != "url" {
@@ -65,9 +156,32 @@ func Start() {
 	}
 
 	chain := func() {
+		chainMu.Lock()
+		chainStatus.Phase = "refreshing"
+		chainStatus.Detail = "拉取订阅源中"
+		chainMu.Unlock()
 		refreshAllSourcesSync()
+
+		chainMu.Lock()
+		chainStatus.Phase = "checking"
+		chainStatus.CheckDone = 0
+		chainMu.Unlock()
 		runHealthChecks(healthMode, healthCheckTimeout(config))
+
+		chainMu.Lock()
+		chainStatus.Phase = "prewarming"
+		chainStatus.Detail = "预热订阅缓存中"
+		chainMu.Unlock()
 		prewarmSubscriptionCaches()
+
+		chainMu.Lock()
+		chainStatus.Phase = "idle"
+		chainStatus.Detail = ""
+		chainStatus.Pending = nil
+		chainStatus.Checked = nil
+		chainStatus.Checking = nil
+		chainStatus.LastRun = time.Now()
+		chainMu.Unlock()
 	}
 
 	// Startup: fetch subscriptions, then immediately latency-test and pre-warm.
@@ -156,10 +270,21 @@ func runHealthChecks(mode string, timeout time.Duration) {
 		return
 	}
 	profiles := mgr.GetAllProfiles()
+	var enabled []*rule.Profile
 	for _, p := range profiles {
-		if !p.Enabled {
-			continue
+		if p.Enabled {
+			enabled = append(enabled, p)
 		}
+	}
+	total := len(enabled)
+	done := 0
+	var pendingNames, checkedNames []string
+	for _, p := range enabled {
+		pendingNames = append(pendingNames, p.Name)
+	}
+	setChainQueues(pendingNames, checkedNames)
+	for _, p := range enabled {
+		setChainCheck(done, total, p.Name, 0, 0)
 		testProfile := *p
 		testProfile.MaxLatency = 0
 		testProfile.DropDead = false
@@ -167,14 +292,28 @@ func runHealthChecks(mode string, timeout time.Duration) {
 		result, err := pipeline.RunCached(context.Background(), &testProfile)
 		if err != nil {
 			slog.Warn("scheduled health check skipped", "profile", p.Name, "error", err)
+			chainMu.Lock()
+			chainStatus.LastError = p.Name + ": " + err.Error()
+			chainMu.Unlock()
+			recordCheckSummary(p.Name, 0, 0)
+			done++
+			for i, n := range pendingNames {
+				if n == p.Name {
+					pendingNames = append(pendingNames[:i], pendingNames[i+1:]...)
+					break
+				}
+			}
 			continue
 		}
 
+		onProgress := func(nodeDone, nodeTotal int) {
+			setChainCheck(done, total, p.Name, nodeDone, nodeTotal)
+		}
 		var results []healthcheck.NodeResult
 		if mode == "url" {
-			results = latency.TestNodes(result.Proxies, "", timeout, 16)
+			results = latency.TestNodesProgress(result.Proxies, "", timeout, 16, onProgress)
 		} else {
-			results = healthcheck.CheckNodes(result.Proxies, 100, timeout)
+			results = healthcheck.CheckNodesProgress(result.Proxies, 100, timeout, onProgress)
 		}
 		healthcheck.UpdateResults(results)
 
@@ -186,6 +325,17 @@ func runHealthChecks(mode string, timeout time.Duration) {
 		}
 		slog.Info("scheduled health check done",
 			"profile", p.Name, "total", len(results), "alive", alive, "mode", mode)
+		recordCheckSummary(p.Name, len(results), alive)
+		done++
+		setChainCheck(done, total, p.Name, 0, 0)
+		for i, n := range pendingNames {
+			if n == p.Name {
+				pendingNames = append(pendingNames[:i], pendingNames[i+1:]...)
+				break
+			}
+		}
+		checkedNames = append(checkedNames, p.Name)
+		setChainQueues(pendingNames, checkedNames)
 	}
 	// Fresh health data changes filter outcomes — drop cached subscription
 	// output so the next request applies the fresh data.
@@ -204,6 +354,10 @@ func prewarmSubscriptionCaches() {
 		if !p.Enabled {
 			continue
 		}
+		chainMu.Lock()
+		chainStatus.Phase = "prewarming"
+		chainStatus.Detail = "预热订阅缓存：" + p.Name
+		chainMu.Unlock()
 		if _, err := pipeline.RunCached(context.Background(), p); err != nil {
 			slog.Warn("pre-warm failed", "profile", p.Name, "error", err)
 			continue

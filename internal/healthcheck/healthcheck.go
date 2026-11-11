@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -72,6 +73,13 @@ func CheckNode(name, server string, port int, timeout time.Duration) NodeResult 
 // maxConcurrent controls parallelism (0 = unlimited).
 // timeout is per-node TCP connect timeout.
 func CheckNodes(proxies []map[string]interface{}, maxConcurrent int, timeout time.Duration) []NodeResult {
+	return CheckNodesProgress(proxies, maxConcurrent, timeout, nil)
+}
+
+// CheckNodesProgress is CheckNodes with an optional progress callback
+// (done, total) invoked after each node finishes — used by the scheduler
+// chain to expose node-level progress.
+func CheckNodesProgress(proxies []map[string]interface{}, maxConcurrent int, timeout time.Duration, onProgress func(done, total int)) []NodeResult {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 50
 	}
@@ -80,6 +88,7 @@ func CheckNodes(proxies []map[string]interface{}, maxConcurrent int, timeout tim
 	}
 
 	results := make([]NodeResult, len(proxies))
+	var done atomic.Int64
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxConcurrent)
 
@@ -95,6 +104,10 @@ func CheckNodes(proxies []map[string]interface{}, maxConcurrent int, timeout tim
 			port := fieldInt(proxy, "port")
 
 			results[idx] = CheckNode(name, server, port, timeout)
+			if onProgress != nil {
+				n := done.Add(1)
+				onProgress(int(n), len(proxies))
+			}
 		}(i, p)
 	}
 	wg.Wait()

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/metacubex/mihomo/adapter"
@@ -82,10 +83,16 @@ func TestNode(proxy map[string]interface{}, testURL string, timeout time.Duratio
 // TestNodes batch-tests proxies through the proxy channel itself.
 // maxConcurrent <= 0 defaults to 8 (url tests are heavier than TCP checks).
 func TestNodes(proxies []map[string]interface{}, testURL string, timeout time.Duration, maxConcurrent int) []healthcheck.NodeResult {
+	return TestNodesProgress(proxies, testURL, timeout, maxConcurrent, nil)
+}
+
+// TestNodesProgress is TestNodes with an optional (done, total) progress callback.
+func TestNodesProgress(proxies []map[string]interface{}, testURL string, timeout time.Duration, maxConcurrent int, onProgress func(done, total int)) []healthcheck.NodeResult {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 8
 	}
 	results := make([]healthcheck.NodeResult, len(proxies))
+	var done atomic.Int64
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxConcurrent)
 
@@ -96,6 +103,10 @@ func TestNodes(proxies []map[string]interface{}, testURL string, timeout time.Du
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			results[idx] = TestNode(proxy, testURL, timeout)
+			if onProgress != nil {
+				n := done.Add(1)
+				onProgress(int(n), len(proxies))
+			}
 		}(i, p)
 	}
 	wg.Wait()

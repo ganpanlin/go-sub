@@ -74,6 +74,7 @@ func NewRouter() *mux.Router {
 	api.HandleFunc("/health-check/nodes", handler.HealthCheckNodesHandler).Methods("GET")
 	api.HandleFunc("/health-check/cancel", handler.HealthCheckCancelHandler).Methods("POST")
 	api.HandleFunc("/health-check/events", handler.HealthCheckEventsHandler).Methods("GET")
+	api.HandleFunc("/scheduler/status", handler.SchedulerStatusHandler).Methods("GET")
 
 	// Profile access statistics
 	api.HandleFunc("/profiles/stats", handler.ProfileStatsHandler).Methods("GET")
