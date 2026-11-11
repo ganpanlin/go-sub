@@ -42,6 +42,7 @@ type CheckProgress struct {
 type CheckSummary struct {
 	Total int       `json:"total"`
 	Alive int       `json:"alive"`
+	Mode  string    `json:"mode,omitempty"` // tcp | url
 	At    time.Time `json:"at"`
 }
 
@@ -93,12 +94,12 @@ func setChainQueues(pending, checked []string) {
 }
 
 // recordCheckSummary 记录并持久化单订阅检测摘要
-func recordCheckSummary(name string, total, alive int) {
+func recordCheckSummary(name string, total, alive int, mode string) {
 	chainMu.Lock()
 	if chainStatus.LastResults == nil {
 		chainStatus.LastResults = map[string]CheckSummary{}
 	}
-	chainStatus.LastResults[name] = CheckSummary{Total: total, Alive: alive, At: time.Now()}
+	chainStatus.LastResults[name] = CheckSummary{Total: total, Alive: alive, Mode: mode, At: time.Now()}
 	snapshot := chainStatus.LastResults
 	chainMu.Unlock()
 	_ = datastore.WriteJSON("check-summaries.json", snapshot)
@@ -152,9 +153,10 @@ func Start() {
 		chainMu.Unlock()
 	}
 	healthInterval := config.HealthIntervalOrDefault()
+	// 默认 url 真实测速——TCP 握手延迟对延迟过滤几乎没有区分度
 	healthMode := config.HealthCheckMode
-	if healthMode != "url" {
-		healthMode = "tcp"
+	if healthMode != "tcp" {
+		healthMode = "url"
 	}
 
 	chain := func() {
@@ -297,7 +299,7 @@ func runHealthChecks(mode string, timeout time.Duration) {
 			chainMu.Lock()
 			chainStatus.LastError = p.Name + ": " + err.Error()
 			chainMu.Unlock()
-			recordCheckSummary(p.Name, 0, 0)
+			recordCheckSummary(p.Name, 0, 0, mode)
 			done++
 			for i, n := range pendingNames {
 				if n == p.Name {
@@ -327,7 +329,7 @@ func runHealthChecks(mode string, timeout time.Duration) {
 		}
 		slog.Info("scheduled health check done",
 			"profile", p.Name, "total", len(results), "alive", alive, "mode", mode)
-		recordCheckSummary(p.Name, len(results), alive)
+		recordCheckSummary(p.Name, len(results), alive, mode)
 		done++
 		setChainCheck(done, total, p.Name, 0, 0)
 		for i, n := range pendingNames {

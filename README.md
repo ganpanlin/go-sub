@@ -96,7 +96,7 @@ docker run -d -p 8080:8080 \
 ```
 
 - `health_check_interval_minutes`：链路周期（分钟）。**缺省 = 60**；`0` = 关闭
-- `health_check_mode`：`tcp`（默认，快速）或 `url`（真实延迟，推荐用于延迟过滤）
+- `health_check_mode`：**`url`（默认，真实延迟测速）**或 `tcp`（快速连通性）
 - `health_check_timeout_sec`：单节点超时，默认 tcp 3 秒 / url 5 秒
 
 ### 自定义规则集

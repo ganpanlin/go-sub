@@ -419,7 +419,7 @@ Vue.component('profile-list', {
         </el-tag>
         <el-tag v-else-if="pendingHas(scope.row)" size="mini" type="info">待检测</el-tag>
         <el-tag v-else-if="checkedHas(scope.row)" size="mini" type="success">检测完成</el-tag>
-        <span v-else-if="lastResultOf(scope.row)" class="hint">存活 {{ lastResultOf(scope.row).alive }}/{{ lastResultOf(scope.row).total }}</span>
+        <span v-else-if="lastResultOf(scope.row)" class="hint">{{ lastResultOf(scope.row).mode === 'url' ? '测速' : 'TCP' }} {{ lastResultOf(scope.row).alive }}/{{ lastResultOf(scope.row).total }}</span>
         <span v-else class="hint">-</span>
       </template>
     </el-table-column>
